@@ -1,0 +1,7 @@
+# SDK de la cámara Orbbec Femto Bolt (wrapper Python v2)
+pyorbbecsdk2
+
+# Procesamiento de imagen y señal
+opencv-python
+numpy
+scipy
