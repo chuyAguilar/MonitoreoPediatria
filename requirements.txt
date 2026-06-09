@@ -6,3 +6,6 @@ opencv-python
 numpy
 scipy
 matplotlib
+
+# Mensajería de datos (simulador → servidor)
+paho-mqtt
