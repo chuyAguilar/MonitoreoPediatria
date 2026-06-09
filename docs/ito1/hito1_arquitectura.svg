@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="372" viewBox="0 0 680 372" role="img">
+<title>Arquitectura del Hito 1: video en vivo de la Femto Bolt</title>
+<desc>La Mac captura la Femto y publica por RTSP al servidor con MediaMTX, que retransmite por WebRTC al navegador de la PC Windows. El codigo se reparte por GitHub.</desc>
+<style>
+text{font-family:'Helvetica Neue',Arial,sans-serif}
+.t{font-size:14px;fill:#1a1a1a}
+.ts{font-size:12px;fill:#555}
+.th{font-size:14px;font-weight:500;fill:#1a1a1a}
+.title{font-size:18px;font-weight:500;fill:#111}
+.box{fill:#f5f5f4;stroke:#cfcfcf;stroke-width:1}
+.blue{fill:#e8f0fe;stroke:#3f76c4;stroke-width:1.5}
+.teal{fill:#e2f3f0;stroke:#2a9d8f;stroke-width:1.5}
+.amber{fill:#fbf1dd;stroke:#d8a32c;stroke-width:1.5}
+.arr{stroke:#444;stroke-width:1.5;fill:none}
+.leader{stroke:#aaa;stroke-width:1;stroke-dasharray:4 3;fill:none}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="680" height="372" fill="#ffffff"/>
+<text x="40" y="30" class="title">Hito 1 — video en vivo en tiempo real</text>
+<text x="40" y="50" class="ts">Femto Bolt a servidor a navegador. Las 3 maquinas se unen por Tailscale.</text>
+
+<rect x="250" y="62" width="180" height="32" rx="8" class="box"/>
+<text x="340" y="82" class="th" text-anchor="middle">GitHub · git push / pull</text>
+<path class="leader" d="M300 94 L132 118"/>
+<path class="leader" d="M360 94 L340 118"/>
+<text x="214" y="110" class="ts" text-anchor="middle">git pull</text>
+
+<rect x="40" y="120" width="160" height="172" rx="10" class="blue"/>
+<text x="120" y="144" class="th" text-anchor="middle">chuypc · Mac 2014</text>
+<text x="120" y="166" class="ts" text-anchor="middle">edge · captura</text>
+<text x="120" y="188" class="ts" text-anchor="middle">Femto Bolt USB 3.0</text>
+<text x="120" y="208" class="ts" text-anchor="middle">pyorbbecsdk2 a RGB</text>
+<text x="120" y="228" class="ts" text-anchor="middle">ffmpeg a H.264</text>
+<text x="120" y="250" class="ts" text-anchor="middle">stream_to_server.py</text>
+<text x="120" y="276" class="ts" text-anchor="middle">100.72.226.69</text>
+
+<rect x="260" y="120" width="160" height="172" rx="10" class="teal"/>
+<text x="340" y="144" class="th" text-anchor="middle">servidor · Gateway</text>
+<text x="340" y="166" class="ts" text-anchor="middle">retransmision</text>
+<text x="340" y="188" class="ts" text-anchor="middle">MediaMTX v1.17</text>
+<text x="340" y="208" class="ts" text-anchor="middle">RTSP in · :8554</text>
+<text x="340" y="228" class="ts" text-anchor="middle">WebRTC out · :8889</text>
+<text x="340" y="250" class="ts" text-anchor="middle">./mediamtx</text>
+<text x="340" y="276" class="ts" text-anchor="middle">100.110.157.112</text>
+
+<rect x="480" y="120" width="160" height="172" rx="10" class="amber"/>
+<text x="560" y="144" class="th" text-anchor="middle">bigdaddy · Win 11</text>
+<text x="560" y="166" class="ts" text-anchor="middle">mando · visor</text>
+<text x="560" y="188" class="ts" text-anchor="middle">navegador web</text>
+<text x="560" y="208" class="ts" text-anchor="middle">WebRTC · menos de 1 s</text>
+<text x="560" y="228" class="ts" text-anchor="middle">ve el video</text>
+<text x="560" y="250" class="ts" text-anchor="middle">:8889/femto</text>
+<text x="560" y="276" class="ts" text-anchor="middle">100.69.158.31</text>
+
+<line class="arr" x1="200" y1="206" x2="260" y2="206" marker-end="url(#arrow)"/>
+<text x="230" y="192" class="ts" text-anchor="middle">RTSP</text>
+<text x="230" y="224" class="ts" text-anchor="middle">:8554</text>
+
+<line class="arr" x1="420" y1="206" x2="480" y2="206" marker-end="url(#arrow)"/>
+<text x="450" y="192" class="ts" text-anchor="middle">WebRTC</text>
+<text x="450" y="224" class="ts" text-anchor="middle">:8889</text>
+
+<line x1="40" y1="312" x2="640" y2="312" stroke="#cfcfcf" stroke-width="1"/>
+<text x="40" y="332" class="th">Como reproducir (en orden)</text>
+<text x="120" y="356" class="ts" text-anchor="middle">2 · stream_to_server.py</text>
+<text x="340" y="356" class="ts" text-anchor="middle">1 · ./mediamtx</text>
+<text x="560" y="356" class="ts" text-anchor="middle">3 · abrir :8889/femto</text>
+</svg>

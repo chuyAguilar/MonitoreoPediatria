@@ -5,3 +5,4 @@ pyorbbecsdk2
 opencv-python
 numpy
 scipy
+matplotlib
