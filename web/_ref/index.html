@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Monitoreo Pediatría — Cuadro Central</title>
+	<meta name="description" content="Tablero de monitoreo pediátrico en tiempo real: signos vitales y video en vivo por cama." />
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+	<!-- MQTT.js via CDN -->
+	<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+	<style>
+		/* ============================================================
+		   VARIABLES Y RESET
+		   ============================================================ */
+		:root {
+			--color-bg:          #050b14;
+			--color-surface:     #0b1623;
+			--color-surface-2:   #0f1e30;
+			--color-border:      #1a2d45;
+			--color-border-glow: #1e3d5c;
+
+			--color-fc:    #00e676;   /* verde — FC */
+			--color-spo2:  #00e5ff;   /* cian  — SpO2 */
+			--color-fp:    #69f0ae;   /* verde claro — FP */
+			--color-fr:    #ffee58;   /* amarillo — FR */
+			--color-temp:  #f5f5f5;   /* blanco — Temp */
+			--color-pni:   #ff7043;   /* naranja — PNI */
+
+			--color-online:  #00e676;
+			--color-offline: #546e7a;
+			--color-warning: #ffd54f;
+
+			--color-text-primary:   #e8f0fe;
+			--color-text-secondary: #7b9db8;
+			--color-text-muted:     #3d5a73;
+
+			--radius-card:   14px;
+			--radius-inner:  8px;
+			--shadow-card:   0 4px 24px rgba(0,0,0,0.55);
+
+			--font-mono: 'JetBrains Mono', 'Courier New', monospace;
+			--font-ui:   'Inter', sans-serif;
+
+			--transition-fast: 0.15s ease;
+			--transition-med:  0.25s ease;
+		}
+
+		*, *::before, *::after {
+			box-sizing: border-box;
+			margin: 0;
+			padding: 0;
+		}
+
+		html, body {
+			height: 100%;
+			background: var(--color-bg);
+			color: var(--color-text-primary);
+			font-family: var(--font-ui);
+			overflow-x: hidden;
+		}
+
+		/* ============================================================
+		   ENCABEZADO GENERAL
+		   ============================================================ */
+		#encabezado {
+			position: sticky;
+			top: 0;
+			z-index: 100;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 0 28px;
+			height: 62px;
+			background: rgba(5, 11, 20, 0.92);
+			backdrop-filter: blur(12px);
+			border-bottom: 1px solid var(--color-border);
+		}
+
+		.encabezado-izq {
+			display: flex;
+			align-items: center;
+			gap: 14px;
+		}
+
+		.logo-cross {
+			width: 34px;
+			height: 34px;
+			position: relative;
+			flex-shrink: 0;
+		}
+
+		.logo-cross::before,
+		.logo-cross::after {
+			content: '';
+			position: absolute;
+			background: var(--color-fc);
+			border-radius: 3px;
+			box-shadow: 0 0 8px var(--color-fc);
+		}
+
+		.logo-cross::before {
+			width: 6px;
+			height: 100%;
+			left: 50%;
+			transform: translateX(-50%);
+		}
+
+		.logo-cross::after {
+			width: 100%;
+			height: 6px;
+			top: 50%;
+			transform: translateY(-50%);
+		}
+
+		.titulo-app {
+			font-size: 1.25rem;
+			font-weight: 700;
+			letter-spacing: 0.04em;
+			color: var(--color-text-primary);
+		}
+
+		.subtitulo-app {
+			font-size: 0.72rem;
+			color: var(--color-text-secondary);
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+		}
+
+		.encabezado-der {
+			display: flex;
+			align-items: center;
+			gap: 24px;
+		}
+
+		#contador-camas {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			font-size: 0.85rem;
+			color: var(--color-text-secondary);
+		}
+
+		#contador-camas strong {
+			color: var(--color-text-primary);
+			font-size: 1.1rem;
+		}
+
+		#indicador-mqtt {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			font-size: 0.78rem;
+			color: var(--color-text-secondary);
+		}
+
+		.mqtt-dot {
+			width: 8px;
+			height: 8px;
+			border-radius: 50%;
+			background: var(--color-offline);
+			transition: background var(--transition-med);
+		}
+
+		.mqtt-dot.conectado {
+			background: var(--color-online);
+			box-shadow: 0 0 6px var(--color-online);
+			animation: pulse-dot 2s infinite;
+		}
+
+		#reloj {
+			font-family: var(--font-mono);
+			font-size: 0.9rem;
+			color: var(--color-text-secondary);
+			letter-spacing: 0.05em;
+		}
+
+		/* ============================================================
+		   CUADRÍCULA PRINCIPAL
+		   ============================================================ */
+		#cuadricula {
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+			gap: 20px;
+			padding: 24px;
+			align-items: start;
+		}
+
+		#pantalla-espera {
+			grid-column: 1 / -1;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			gap: 20px;
+			padding: 80px 20px;
+			color: var(--color-text-muted);
+		}
+
+		.spinner-espera {
+			width: 48px;
+			height: 48px;
+			border: 3px solid var(--color-border);
+			border-top-color: var(--color-spo2);
+			border-radius: 50%;
+			animation: spin 1s linear infinite;
+		}
+
+		.espera-texto {
+			font-size: 1rem;
+			letter-spacing: 0.05em;
+		}
+
+		/* ============================================================
+		   TARJETA DE CAMA
+		   ============================================================ */
+		.tarjeta-cama {
+			background: var(--color-surface);
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius-card);
+			overflow: hidden;
+			box-shadow: var(--shadow-card);
+			cursor: pointer;
+			transition: transform var(--transition-med), border-color var(--transition-med), box-shadow var(--transition-med);
+			position: relative;
+		}
+
+		.tarjeta-cama:hover {
+			transform: translateY(-3px);
+			border-color: var(--color-border-glow);
+			box-shadow: 0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px var(--color-border-glow);
+		}
+
+		.tarjeta-cama.desconectada {
+			opacity: 0.55;
+		}
+
+		/* Encabezado de tarjeta */
+		.tarjeta-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 10px 14px 8px;
+			background: var(--color-surface-2);
+			border-bottom: 1px solid var(--color-border);
+		}
+
+		.cama-id-label {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		.dot-estado {
+			width: 9px;
+			height: 9px;
+			border-radius: 50%;
+			background: var(--color-offline);
+			flex-shrink: 0;
+			transition: background var(--transition-med), box-shadow var(--transition-med);
+		}
+
+		.dot-estado.online {
+			background: var(--color-online);
+			box-shadow: 0 0 7px var(--color-online);
+			animation: pulse-dot 2.5s infinite;
+		}
+
+		.cama-nombre {
+			font-family: var(--font-mono);
+			font-size: 1rem;
+			font-weight: 700;
+			color: var(--color-text-primary);
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+		}
+
+		.origen-badge {
+			font-size: 0.65rem;
+			padding: 2px 7px;
+			border-radius: 20px;
+			background: rgba(255,255,255,0.06);
+			color: var(--color-text-secondary);
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+		}
+
+		.ts-ultimo {
+			font-family: var(--font-mono);
+			font-size: 0.65rem;
+			color: var(--color-text-muted);
+		}
+
+		/* Zona de video */
+		.zona-video {
+			position: relative;
+			width: 100%;
+			background: #000;
+			aspect-ratio: 16 / 9;
+			overflow: hidden;
+		}
+
+		.zona-video video {
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+			display: block;
+		}
+
+		.sin-camara {
+			position: absolute;
+			inset: 0;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			color: var(--color-text-muted);
+			background: #040a12;
+		}
+
+		.sin-camara-icono {
+			font-size: 2.2rem;
+			opacity: 0.4;
+		}
+
+		.sin-camara-texto {
+			font-size: 0.78rem;
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+		}
+
+		/* Signos vitales */
+		.signos-grid {
+			display: grid;
+			grid-template-columns: repeat(3, 1fr);
+			gap: 1px;
+			background: var(--color-border);
+			border-top: 1px solid var(--color-border);
+		}
+
+		.signo-item {
+			background: var(--color-surface);
+			padding: 10px 10px 8px;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 2px;
+			position: relative;
+			overflow: hidden;
+			transition: background var(--transition-fast);
+		}
+
+		.signo-item::before {
+			content: '';
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			height: 2px;
+			background: var(--signo-color, #fff);
+			opacity: 0.7;
+		}
+
+		.signo-etiqueta {
+			font-size: 0.6rem;
+			font-weight: 600;
+			letter-spacing: 0.12em;
+			text-transform: uppercase;
+			color: var(--color-text-muted);
+		}
+
+		.signo-valor {
+			font-family: var(--font-mono);
+			font-size: 1.75rem;
+			font-weight: 700;
+			color: var(--signo-color, #fff);
+			line-height: 1;
+			letter-spacing: -0.02em;
+			text-shadow: 0 0 12px var(--signo-color, #fff);
+			transition: color var(--transition-fast);
+		}
+
+		.signo-valor.sin-dato {
+			color: var(--color-text-muted);
+			text-shadow: none;
+			font-size: 1.4rem;
+		}
+
+		.signo-unidad {
+			font-size: 0.62rem;
+			color: var(--color-text-secondary);
+			letter-spacing: 0.06em;
+		}
+
+		/* PNI ocupa fila completa */
+		.signo-item.pni-item {
+			grid-column: 1 / -1;
+			flex-direction: row;
+			align-items: center;
+			justify-content: space-between;
+			padding: 8px 16px;
+		}
+
+		.pni-valores {
+			display: flex;
+			align-items: baseline;
+			gap: 6px;
+		}
+
+		.pni-valor-principal {
+			font-family: var(--font-mono);
+			font-size: 1.5rem;
+			font-weight: 700;
+			color: var(--color-pni);
+			text-shadow: 0 0 10px var(--color-pni);
+		}
+
+		.pni-separador {
+			color: var(--color-text-muted);
+			font-size: 1.1rem;
+		}
+
+		.pni-media {
+			font-family: var(--font-mono);
+			font-size: 1rem;
+			color: var(--color-pni);
+			opacity: 0.75;
+		}
+
+		.pni-ts {
+			font-family: var(--font-mono);
+			font-size: 0.62rem;
+			color: var(--color-text-muted);
+		}
+
+		/* ============================================================
+		   MODAL DE DETALLE
+		   ============================================================ */
+		#modal-overlay {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 200;
+			background: rgba(0,0,0,0.82);
+			backdrop-filter: blur(6px);
+			animation: fade-in var(--transition-med) forwards;
+		}
+
+		#modal-overlay.visible {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 24px;
+		}
+
+		#modal-contenido {
+			background: var(--color-surface);
+			border: 1px solid var(--color-border-glow);
+			border-radius: 18px;
+			width: 100%;
+			max-width: 860px;
+			max-height: 90vh;
+			overflow-y: auto;
+			box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+			animation: slide-up var(--transition-med) forwards;
+		}
+
+		.modal-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 16px 20px;
+			border-bottom: 1px solid var(--color-border);
+			position: sticky;
+			top: 0;
+			background: var(--color-surface);
+			z-index: 1;
+		}
+
+		.modal-titulo {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			font-size: 1.15rem;
+			font-weight: 700;
+			font-family: var(--font-mono);
+			letter-spacing: 0.06em;
+			text-transform: uppercase;
+		}
+
+		#btn-cerrar-modal {
+			background: none;
+			border: 1px solid var(--color-border);
+			border-radius: 8px;
+			color: var(--color-text-secondary);
+			cursor: pointer;
+			padding: 6px 12px;
+			font-size: 0.85rem;
+			transition: all var(--transition-fast);
+		}
+
+		#btn-cerrar-modal:hover {
+			border-color: var(--color-border-glow);
+			color: var(--color-text-primary);
+		}
+
+		.modal-cuerpo {
+			padding: 20px;
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 20px;
+		}
+
+		.modal-video-wrap {
+			aspect-ratio: 16/9;
+			background: #000;
+			border-radius: var(--radius-inner);
+			overflow: hidden;
+			position: relative;
+		}
+
+		.modal-video-wrap video {
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+		}
+
+		.modal-signos {
+			display: flex;
+			flex-direction: column;
+			gap: 10px;
+		}
+
+		.modal-signo-row {
+			background: var(--color-surface-2);
+			border: 1px solid var(--color-border);
+			border-left: 4px solid var(--signo-color, var(--color-border));
+			border-radius: var(--radius-inner);
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 12px 16px;
+		}
+
+		.modal-signo-nombre {
+			font-size: 0.78rem;
+			color: var(--color-text-secondary);
+			font-weight: 600;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+		}
+
+		.modal-signo-valor {
+			font-family: var(--font-mono);
+			font-size: 2rem;
+			font-weight: 700;
+			color: var(--signo-color, #fff);
+			text-shadow: 0 0 14px var(--signo-color, #fff);
+		}
+
+		.modal-signo-valor.sin-dato {
+			color: var(--color-text-muted);
+			text-shadow: none;
+			font-size: 1.5rem;
+		}
+
+		.modal-signo-unidad {
+			font-size: 0.72rem;
+			color: var(--color-text-muted);
+		}
+
+		.modal-info {
+			grid-column: 1 / -1;
+			display: flex;
+			gap: 20px;
+			font-size: 0.78rem;
+			color: var(--color-text-muted);
+			padding-top: 4px;
+			flex-wrap: wrap;
+		}
+
+		.modal-info span strong {
+			color: var(--color-text-secondary);
+		}
+
+		/* ============================================================
+		   ANIMACIONES
+		   ============================================================ */
+		@keyframes pulse-dot {
+			0%, 100% { opacity: 1; }
+			50%       { opacity: 0.4; }
+		}
+
+		@keyframes spin {
+			to { transform: rotate(360deg); }
+		}
+
+		@keyframes fade-in {
+			from { opacity: 0; }
+			to   { opacity: 1; }
+		}
+
+		@keyframes slide-up {
+			from { opacity: 0; transform: translateY(30px); }
+			to   { opacity: 1; transform: translateY(0); }
+		}
+
+		@keyframes nuevo-dato {
+			0%   { opacity: 0.5; transform: scale(0.97); }
+			50%  { opacity: 1;   transform: scale(1.01); }
+			100% { opacity: 1;   transform: scale(1); }
+		}
+
+		.parpadeo-dato {
+			animation: nuevo-dato 0.3s ease forwards;
+		}
+
+		/* ============================================================
+		   RESPONSIVE
+		   ============================================================ */
+		@media (max-width: 700px) {
+			#cuadricula {
+				grid-template-columns: 1fr;
+				padding: 12px;
+				gap: 14px;
+			}
+
+			.modal-cuerpo {
+				grid-template-columns: 1fr;
+			}
+
+			.modal-video-wrap {
+				aspect-ratio: 16/9;
+			}
+
+			.titulo-app {
+				font-size: 1rem;
+			}
+		}
+
+		/* Scrollbar */
+		::-webkit-scrollbar {
+			width: 6px;
+		}
+
+		::-webkit-scrollbar-track {
+			background: transparent;
+		}
+
+		::-webkit-scrollbar-thumb {
+			background: var(--color-border);
+			border-radius: 3px;
+		}
+
+		::-webkit-scrollbar-thumb:hover {
+			background: var(--color-border-glow);
+		}
+	</style>
+</head>
+<body>
+
+<!-- ================================================================
+     ENCABEZADO GENERAL
+     ================================================================ -->
+<header id="encabezado" role="banner">
+	<div class="encabezado-izq">
+		<div class="logo-cross" aria-hidden="true"></div>
+		<div>
+			<h1 class="titulo-app">Monitoreo Pediatría</h1>
+			<p class="subtitulo-app">Cuadro de control · Observación</p>
+		</div>
+	</div>
+	<div class="encabezado-der">
+		<div id="contador-camas" aria-live="polite">
+			<strong id="num-camas-activas">0</strong>
+			<span>camas activas</span>
+		</div>
+		<div id="indicador-mqtt" title="Estado conexión MQTT">
+			<div class="mqtt-dot" id="mqtt-dot" aria-hidden="true"></div>
+			<span id="mqtt-estado-texto">Conectando…</span>
+		</div>
+		<div id="reloj" aria-label="Hora actual"></div>
+	</div>
+</header>
+
+<!-- ================================================================
+     CUADRÍCULA DE CAMAS
+     ================================================================ -->
+<main id="cuadricula" role="main" aria-label="Cuadrícula de camas">
+	<div id="pantalla-espera">
+		<div class="spinner-espera" aria-hidden="true"></div>
+		<p class="espera-texto">Esperando datos del broker MQTT…</p>
+	</div>
+</main>
+
+<!-- ================================================================
+     MODAL DE DETALLE
+     ================================================================ -->
+<div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-cama-nombre">
+	<div id="modal-contenido">
+		<div class="modal-header">
+			<div class="modal-titulo">
+				<div class="dot-estado" id="modal-dot-estado"></div>
+				<span id="modal-cama-nombre">—</span>
+			</div>
+			<button id="btn-cerrar-modal" aria-label="Cerrar detalle">Cerrar ✕</button>
+		</div>
+		<div class="modal-cuerpo" id="modal-cuerpo">
+			<!-- Se llena dinámicamente -->
+		</div>
+	</div>
+</div>
+
+<script>
+/* ================================================================
+   CONFIGURACIÓN (ajusta estos valores según tu entorno)
+   ================================================================ */
+const SERVIDOR      = "100.110.157.112";
+const MQTT_WS_URL   = `ws://${SERVIDOR}:9001`;       // Mosquitto MQTT sobre WebSocket
+const WEBRTC_BASE   = `http://${SERVIDOR}:8889`;     // MediaMTX WebRTC
+
+/* Tiempo en ms sin mensajes antes de considerar cama sin datos */
+const TIMEOUT_DATOS_MS = 5000;
+
+/* ================================================================
+   ESTADO GLOBAL
+   ================================================================ */
+
+/** @type {Map<string, CamaBed>} */
+const camas = new Map();
+
+/** @type {string|null} camaId de la que está abierta en modal */
+let modalCamaId = null;
+
+/* ================================================================
+   RELOJ
+   ================================================================ */
+function actualizarReloj() {
+	const ahora = new Date();
+	document.getElementById('reloj').textContent = ahora.toLocaleTimeString('es-MX', {
+		hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+	});
+}
+setInterval(actualizarReloj, 1000);
+actualizarReloj();
+
+/* ================================================================
+   MQTT
+   ================================================================ */
+const mqttDot   = document.getElementById('mqtt-dot');
+const mqttTexto = document.getElementById('mqtt-estado-texto');
+
+function setMqttEstado(estado) {
+	if (estado === 'conectado') {
+		mqttDot.classList.add('conectado');
+		mqttTexto.textContent = 'MQTT conectado';
+	} else if (estado === 'error') {
+		mqttDot.classList.remove('conectado');
+		mqttTexto.textContent = 'Error MQTT';
+	} else {
+		mqttDot.classList.remove('conectado');
+		mqttTexto.textContent = estado;
+	}
+}
+
+const cliente = mqtt.connect(MQTT_WS_URL, {
+	clientId: 'monitoreoPediatria_' + Math.random().toString(16).slice(2, 8),
+	clean: true,
+	connectTimeout: 10000,
+	reconnectPeriod: 3000,
+	keepalive: 30,
+});
+
+cliente.on('connect', () => {
+	setMqttEstado('conectado');
+	cliente.subscribe('monitoreo/vitales/+', { qos: 1 });
+	cliente.subscribe('monitoreo/estado/+',  { qos: 1 });
+});
+
+cliente.on('reconnect', () => setMqttEstado('Reconectando…'));
+cliente.on('offline',   () => setMqttEstado('Sin conexión'));
+cliente.on('error',     () => setMqttEstado('error'));
+
+cliente.on('message', (topic, payload) => {
+	try {
+		const msg = JSON.parse(payload.toString());
+		if (topic.startsWith('monitoreo/vitales/')) {
+			manejarVitales(msg);
+		} else if (topic.startsWith('monitoreo/estado/')) {
+			manejarEstado(msg);
+		}
+	} catch (e) {
+		console.warn('[MQTT] Mensaje no JSON:', topic, payload.toString());
+	}
+});
+
+/* ================================================================
+   MANEJO DE MENSAJES
+   ================================================================ */
+
+function manejarVitales(msg) {
+	const camaId = msg.cama_id;
+	if (!camaId) return;
+
+	if (!camas.has(camaId)) {
+		crearTarjetaCama(camaId);
+	}
+
+	const cama = camas.get(camaId);
+	cama.ultimoTs  = Date.now();
+	cama.signos    = msg.signos || {};
+	cama.origen    = msg.origen || '';
+	cama.tsRaw     = msg.ts || '';
+	cama.deviceId  = msg.device_id || '';
+
+	// Si recibimos vitales, se considera online
+	if (!cama.online) {
+		cama.online = true;
+	}
+
+	renderizarSignos(cama);
+	actualizarContador();
+
+	if (modalCamaId === camaId) {
+		renderizarModalSignos(cama);
+	}
+}
+
+function manejarEstado(msg) {
+	const camaId = msg.cama_id;
+	if (!camaId) return;
+
+	if (!camas.has(camaId)) {
+		crearTarjetaCama(camaId);
+	}
+
+	const cama   = camas.get(camaId);
+	cama.online  = msg.estado === 'online';
+
+	actualizarEstadoVisual(cama);
+	actualizarContador();
+}
+
+/* ================================================================
+   CREACIÓN DE TARJETA
+   ================================================================ */
+
+function crearTarjetaCama(camaId) {
+	// Remover pantalla de espera si existe
+	const espera = document.getElementById('pantalla-espera');
+	if (espera) espera.remove();
+
+	const cama = {
+		id:             camaId,
+		online:         false,
+		signos:         {},
+		origen:         '',
+		tsRaw:          '',
+		deviceId:       '',
+		ultimoTs:       null,
+		pc:             null,   // RTCPeerConnection activo
+		videoConectado: false,  // true cuando ontrack recibe el stream
+		whepRetryTimer: null,   // id del setTimeout de reintento
+		timerTimeout:   null,
+	};
+
+	camas.set(camaId, cama);
+
+	const tarjeta = document.createElement('article');
+	tarjeta.className = 'tarjeta-cama';
+	tarjeta.id        = `cama-${camaId}`;
+	tarjeta.setAttribute('role', 'button');
+	tarjeta.setAttribute('tabindex', '0');
+	tarjeta.setAttribute('aria-label', `Detalle de cama ${camaId}`);
+
+	tarjeta.innerHTML = `
+		<div class="tarjeta-header">
+			<div class="cama-id-label">
+				<div class="dot-estado" id="dot-${camaId}"></div>
+				<span class="cama-nombre">${escapeHtml(camaId)}</span>
+			</div>
+			<div style="display:flex;align-items:center;gap:8px;">
+				<span class="origen-badge" id="origen-${camaId}">—</span>
+				<span class="ts-ultimo" id="ts-${camaId}">sin datos</span>
+			</div>
+		</div>
+		<div class="zona-video" id="video-zona-${camaId}">
+			<div class="sin-camara" id="sin-camara-${camaId}">
+				<span class="sin-camara-icono" aria-hidden="true">📷</span>
+				<span class="sin-camara-texto">Conectando cámara…</span>
+			</div>
+			<video id="video-${camaId}" autoplay muted playsinline style="display:none;"></video>
+		</div>
+		<div class="signos-grid" id="signos-${camaId}">
+			${buildSignosHTML(camaId, {})}
+		</div>
+	`;
+
+	tarjeta.addEventListener('click', () => abrirModal(camaId));
+	tarjeta.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter' || e.key === ' ') abrirModal(camaId);
+	});
+
+	document.getElementById('cuadricula').appendChild(tarjeta);
+
+	// Iniciar watchdog de timeout de datos
+	iniciarWatchdogDatos(cama);
+
+	// Intentar WebRTC WHEP
+	iniciarWebRTC(camaId);
+}
+
+/* ================================================================
+   CONSTRUCCIÓN DE HTML DE SIGNOS
+   ================================================================ */
+
+const SIGNOS_CONFIG = [
+	{ clave: 'fc',   etiqueta: 'FC',    unidad: 'lpm',  color: 'var(--color-fc)',   tipo: 'simple' },
+	{ clave: 'spo2', etiqueta: 'SpO₂',  unidad: '%',    color: 'var(--color-spo2)', tipo: 'simple' },
+	{ clave: 'fr',   etiqueta: 'FR',    unidad: 'rpm',  color: 'var(--color-fr)',   tipo: 'simple' },
+	{ clave: 'temp', etiqueta: 'Temp',  unidad: '°C',   color: 'var(--color-temp)', tipo: 'simple' },
+	{ clave: 'fp',   etiqueta: 'FP',    unidad: 'lpm',  color: 'var(--color-fp)',   tipo: 'simple' },
+	{ clave: 'pni',  etiqueta: 'PNI',   unidad: 'mmHg', color: 'var(--color-pni)',  tipo: 'pni'    },
+];
+
+function buildSignosHTML(camaId, signos) {
+	return SIGNOS_CONFIG.map(cfg => {
+		if (cfg.tipo === 'pni') {
+			return buildPniHTML(camaId, cfg, signos.pni);
+		}
+		return buildSimpleSignoHTML(camaId, cfg, signos[cfg.clave]);
+	}).join('');
+}
+
+function buildSimpleSignoHTML(camaId, cfg, signo) {
+	const val     = signo?.valor ?? null;
+	const sinDato = val === null || val === undefined;
+	const texto   = sinDato ? '--' : formatVal(val);
+	return `
+		<div class="signo-item" style="--signo-color:${cfg.color}">
+			<span class="signo-etiqueta">${cfg.etiqueta}</span>
+			<span class="signo-valor${sinDato ? ' sin-dato' : ''}" id="sv-${camaId}-${cfg.clave}">${texto}</span>
+			<span class="signo-unidad">${cfg.unidad}</span>
+		</div>`;
+}
+
+function buildPniHTML(camaId, cfg, pni) {
+	const sin = !pni || pni.sis === null || pni.sis === undefined;
+	const valStr = sin ? '-- / --' : `${pni.sis} / ${pni.dia}`;
+	const media  = sin ? '' : `(${pni.media})`;
+	const tsStr  = (!sin && pni.ts) ? formatPniTs(pni.ts) : '';
+	return `
+		<div class="signo-item pni-item" style="--signo-color:${cfg.color}">
+			<div>
+				<div class="signo-etiqueta">PNI — Presión No Invasiva</div>
+				<div class="pni-ts" id="pni-ts-${camaId}">${tsStr}</div>
+			</div>
+			<div class="pni-valores">
+				<span class="pni-valor-principal${sin ? ' sin-dato' : ''}" id="sv-${camaId}-pni">${sin ? '--/--' : `${pni.sis}/${pni.dia}`}</span>
+				<span class="pni-media" id="pni-media-${camaId}">${media}</span>
+			</div>
+			<div class="signo-unidad">mmHg</div>
+		</div>`;
+}
+
+/* ================================================================
+   ACTUALIZACIÓN DE SIGNOS (sin re-render completo)
+   ================================================================ */
+
+function renderizarSignos(cama) {
+	const signos = cama.signos;
+
+	SIGNOS_CONFIG.forEach(cfg => {
+		if (cfg.tipo === 'pni') {
+			actualizarPni(cama.id, signos.pni);
+			return;
+		}
+		const el = document.getElementById(`sv-${cama.id}-${cfg.clave}`);
+		if (!el) return;
+
+		const signo = signos[cfg.clave];
+		const val   = signo?.valor ?? null;
+		const sinDato = val === null || val === undefined;
+
+		el.textContent = sinDato ? '--' : formatVal(val);
+		el.classList.toggle('sin-dato', sinDato);
+		el.classList.remove('parpadeo-dato');
+		void el.offsetWidth; // force reflow
+		el.classList.add('parpadeo-dato');
+	});
+
+	// Actualizar timestamp y origen
+	const tsEl = document.getElementById(`ts-${cama.id}`);
+	if (tsEl && cama.tsRaw) {
+		tsEl.textContent = formatTsCorto(cama.tsRaw);
+	}
+
+	const origenEl = document.getElementById(`origen-${cama.id}`);
+	if (origenEl && cama.origen) {
+		origenEl.textContent = cama.origen;
+	}
+
+	// Actualizar estado visual por recepción de datos
+	actualizarEstadoVisual(cama);
+}
+
+function actualizarPni(camaId, pni) {
+	const el    = document.getElementById(`sv-${camaId}-pni`);
+	const media = document.getElementById(`pni-media-${camaId}`);
+	const tsEl  = document.getElementById(`pni-ts-${camaId}`);
+
+	if (!el) return;
+
+	const sin = !pni || pni.sis === null || pni.sis === undefined;
+	el.textContent = sin ? '--/--' : `${pni.sis}/${pni.dia}`;
+	el.classList.toggle('sin-dato', sin);
+
+	if (media)  media.textContent  = sin ? '' : `(${pni.media})`;
+	if (tsEl)   tsEl.textContent   = (!sin && pni.ts) ? formatPniTs(pni.ts) : '';
+}
+
+function actualizarEstadoVisual(cama) {
+	const dot = document.getElementById(`dot-${cama.id}`);
+	if (dot) {
+		dot.classList.toggle('online', cama.online);
+	}
+
+	const tarjeta = document.getElementById(`cama-${cama.id}`);
+	if (tarjeta) {
+		tarjeta.classList.toggle('desconectada', !cama.online);
+	}
+}
+
+/* ================================================================
+   WATCHDOG: marcar cama sin datos si no hay mensajes en TIMEOUT_DATOS_MS
+   ================================================================ */
+
+function iniciarWatchdogDatos(cama) {
+	function verificar() {
+		if (cama.ultimoTs !== null && Date.now() - cama.ultimoTs > TIMEOUT_DATOS_MS) {
+			// Marcar sin datos
+			if (cama.online) {
+				cama.online = false;
+				actualizarEstadoVisual(cama);
+				actualizarContador();
+			}
+			marcarSignosVacios(cama.id);
+		}
+		cama.timerTimeout = setTimeout(verificar, 2000);
+	}
+	cama.timerTimeout = setTimeout(verificar, TIMEOUT_DATOS_MS + 1000);
+}
+
+function marcarSignosVacios(camaId) {
+	SIGNOS_CONFIG.forEach(cfg => {
+		const el = document.getElementById(`sv-${camaId}-${cfg.clave}`);
+		if (el) {
+			el.textContent = '--';
+			el.classList.add('sin-dato');
+		}
+	});
+}
+
+/* ================================================================
+   WEBRTC WHEP  (con reintentos automáticos y reconexión)
+   ================================================================ */
+
+/* Intervalo entre reintentos cuando no hay stream (ms) */
+const WHEP_RETRY_MS = 5000;
+
+/**
+ * Intenta una sola negociación WHEP con el servidor MediaMTX.
+ * Devuelve true si la conexión quedó establecida, false si falló.
+ * El caller decide si y cuándo reintentar.
+ */
+async function intentarWhep(camaId) {
+	const urlWhep = `${WEBRTC_BASE}/${camaId}/whep`;
+	const videoEl = document.getElementById(`video-${camaId}`);
+	if (!videoEl) return false;
+
+	const cama = camas.get(camaId);
+	if (!cama) return false;
+
+	// Cerrar PC anterior si existe
+	if (cama.pc && cama.pc.signalingState !== 'closed') {
+		cama.pc.close();
+	}
+
+	const pc = new RTCPeerConnection({
+		iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+	});
+	cama.pc = pc;
+
+	// Cuando llega una pista de video, marcar como conectado
+	pc.ontrack = (event) => {
+		if (event.streams && event.streams[0]) {
+			cama.videoConectado = true;
+			videoEl.srcObject = event.streams[0];
+			videoEl.style.display = 'block';
+			const sinCam = document.getElementById(`sin-camara-${camaId}`);
+			if (sinCam) sinCam.style.display = 'none';
+		}
+	};
+
+	// Vigilar caídas de conexión para reconectar
+	pc.onconnectionstatechange = () => {
+		const estado = pc.connectionState;
+		console.info(`[WebRTC] ${camaId} connectionState → ${estado}`);
+		if (estado === 'failed' || estado === 'disconnected') {
+			cama.videoConectado = false;
+			mostrarSinCamara(camaId, 'Reconectando…');
+			// Reiniciar ciclo de reintentos
+			programarReintento(camaId);
+		}
+	};
+
+	pc.addTransceiver('video', { direction: 'recvonly' });
+	pc.addTransceiver('audio', { direction: 'recvonly' });
+
+	try {
+		const offer = await pc.createOffer();
+		await pc.setLocalDescription(offer);
+
+		// Esperar recolección de candidatos ICE (máx. 3 s)
+		await new Promise((resolve) => {
+			if (pc.iceGatheringState === 'complete') { resolve(); return; }
+			const check = () => {
+				if (pc.iceGatheringState === 'complete') {
+					pc.removeEventListener('icegatheringstatechange', check);
+					resolve();
+				}
+			};
+			pc.addEventListener('icegatheringstatechange', check);
+			setTimeout(resolve, 3000);
+		});
+
+		const resp = await fetch(urlWhep, {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/sdp' },
+			body:    pc.localDescription.sdp,
+		});
+
+		if (!resp.ok) {
+			// 404 → stream aún no existe; otros errores también se reintentan
+			throw new Error(`WHEP HTTP ${resp.status}`);
+		}
+
+		const sdpAnswer = await resp.text();
+		await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
+
+		return true; // negociación exitosa; esperamos el evento ontrack
+
+	} catch (err) {
+		console.info(`[WebRTC] ${camaId}: ${err.message}`);
+		if (pc.signalingState !== 'closed') pc.close();
+		return false;
+	}
+}
+
+/**
+ * Punto de entrada público. Arranca el ciclo de reintentos para una cama.
+ * Reintenta cada WHEP_RETRY_MS hasta que el video conecte.
+ */
+async function iniciarWebRTC(camaId) {
+	const cama = camas.get(camaId);
+	if (!cama) return;
+
+	// Evitar ciclos paralelos
+	if (cama.whepRetryTimer !== undefined) return;
+
+	mostrarSinCamara(camaId, 'Conectando cámara…');
+
+	const exito = await intentarWhep(camaId);
+	if (!exito) {
+		programarReintento(camaId);
+	}
+}
+
+/**
+ * Programa un único reintento diferido. Si ya hay uno pendiente, no apila otro.
+ */
+function programarReintento(camaId) {
+	const cama = camas.get(camaId);
+	if (!cama) return;
+
+	// Limpiar timer anterior si existía
+	if (cama.whepRetryTimer) {
+		clearTimeout(cama.whepRetryTimer);
+	}
+
+	cama.whepRetryTimer = setTimeout(async () => {
+		cama.whepRetryTimer = null;
+		if (cama.videoConectado) return; // ya conectó, no hace falta
+
+		const exito = await intentarWhep(camaId);
+		if (!exito) {
+			mostrarSinCamara(camaId, 'Sin cámara');
+			programarReintento(camaId); // volver a intentar
+		}
+	}, WHEP_RETRY_MS);
+}
+
+function mostrarSinCamara(camaId, texto) {
+	const sinCam  = document.getElementById(`sin-camara-${camaId}`);
+	const videoEl = document.getElementById(`video-${camaId}`);
+	if (sinCam) {
+		sinCam.querySelector('.sin-camara-texto').textContent = texto;
+		sinCam.style.display = 'flex';
+	}
+	if (videoEl) videoEl.style.display = 'none';
+}
+
+/* ================================================================
+   MODAL DE DETALLE
+   ================================================================ */
+
+const overlay       = document.getElementById('modal-overlay');
+const modalCuerpo   = document.getElementById('modal-cuerpo');
+const modalNombre   = document.getElementById('modal-cama-nombre');
+const modalDot      = document.getElementById('modal-dot-estado');
+
+function abrirModal(camaId) {
+	modalCamaId = camaId;
+	const cama  = camas.get(camaId);
+	if (!cama) return;
+
+	modalNombre.textContent = camaId.toUpperCase();
+	modalDot.classList.toggle('online', cama.online);
+
+	modalCuerpo.innerHTML = buildModalHTML(cama);
+
+	// Iniciar video en modal
+	iniciarVideoModal(cama);
+
+	overlay.classList.add('visible');
+	document.body.style.overflow = 'hidden';
+
+	// Renderizar signos actuales
+	renderizarModalSignos(cama);
+}
+
+function cerrarModal() {
+	overlay.classList.remove('visible');
+	document.body.style.overflow = '';
+	modalCamaId = null;
+
+	// Detener video del modal
+	const vm = document.getElementById('video-modal');
+	if (vm && vm.srcObject) {
+		vm.srcObject.getTracks().forEach(t => t.stop());
+		vm.srcObject = null;
+	}
+}
+
+document.getElementById('btn-cerrar-modal').addEventListener('click', cerrarModal);
+overlay.addEventListener('click', (e) => { if (e.target === overlay) cerrarModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarModal(); });
+
+function buildModalHTML(cama) {
+	const filas = SIGNOS_CONFIG.map(cfg => {
+		if (cfg.tipo === 'pni') {
+			const pni = cama.signos?.pni;
+			const sin = !pni || pni.sis === null || pni.sis === undefined;
+			const valStr = sin ? '--/--' : `${pni.sis}/${pni.dia}`;
+			const med    = sin ? '' : ` (${pni.media})`;
+			return `
+				<div class="modal-signo-row" style="--signo-color:${cfg.color}">
+					<div>
+						<div class="modal-signo-nombre">Presión No Invasiva</div>
+						<div class="signo-unidad">mmHg · sis/dia (media)</div>
+					</div>
+					<span class="modal-signo-valor${sin ? ' sin-dato' : ''}" id="msv-${cama.id}-pni">${valStr}${med}</span>
+				</div>`;
+		}
+		const signo = cama.signos?.[cfg.clave];
+		const val   = signo?.valor ?? null;
+		const sin   = val === null || val === undefined;
+		return `
+			<div class="modal-signo-row" style="--signo-color:${cfg.color}">
+				<div>
+					<div class="modal-signo-nombre">${cfg.etiqueta}</div>
+					<div class="signo-unidad">${cfg.unidad}</div>
+				</div>
+				<span class="modal-signo-valor${sin ? ' sin-dato' : ''}" id="msv-${cama.id}-${cfg.clave}">${sin ? '--' : formatVal(val)}</span>
+			</div>`;
+	}).join('');
+
+	const infoOrigen = cama.origen ? `<span><strong>Origen:</strong> ${escapeHtml(cama.origen)}</span>` : '';
+	const infoDevice = cama.deviceId ? `<span><strong>Device:</strong> ${escapeHtml(cama.deviceId)}</span>` : '';
+	const infoTs     = cama.tsRaw ? `<span><strong>Último dato:</strong> ${escapeHtml(cama.tsRaw)}</span>` : '';
+
+	return `
+		<div class="modal-video-wrap">
+			<div class="sin-camara" id="sin-camara-modal" style="display:none">
+				<span class="sin-camara-icono">📷</span>
+				<span class="sin-camara-texto">Sin cámara</span>
+			</div>
+			<video id="video-modal" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover;display:none;"></video>
+		</div>
+		<div class="modal-signos">${filas}</div>
+		<div class="modal-info">
+			${infoOrigen}
+			${infoDevice}
+			${infoTs}
+		</div>`;
+}
+
+function iniciarVideoModal(cama) {
+	// Copiar el stream existente del elemento video de la tarjeta
+	const videoTarjeta = document.getElementById(`video-${cama.id}`);
+	const videoModal   = document.getElementById('video-modal');
+	const sinCamModal  = document.getElementById('sin-camara-modal');
+
+	if (!videoModal) return;
+
+	if (videoTarjeta && videoTarjeta.srcObject) {
+		videoModal.srcObject = videoTarjeta.srcObject;
+		videoModal.style.display = 'block';
+		if (sinCamModal) sinCamModal.style.display = 'none';
+	} else {
+		if (sinCamModal) sinCamModal.style.display = 'flex';
+	}
+}
+
+function renderizarModalSignos(cama) {
+	SIGNOS_CONFIG.forEach(cfg => {
+		const el = document.getElementById(`msv-${cama.id}-${cfg.clave}`);
+		if (!el) return;
+
+		if (cfg.tipo === 'pni') {
+			const pni = cama.signos?.pni;
+			const sin = !pni || pni.sis === null || pni.sis === undefined;
+			el.textContent = sin ? '--/--' : `${pni.sis}/${pni.dia} (${pni.media})`;
+			el.classList.toggle('sin-dato', sin);
+			return;
+		}
+
+		const signo = cama.signos?.[cfg.clave];
+		const val   = signo?.valor ?? null;
+		const sin   = val === null || val === undefined;
+		el.textContent = sin ? '--' : formatVal(val);
+		el.classList.toggle('sin-dato', sin);
+	});
+
+	// Actualizar dot del modal
+	if (modalDot) {
+		modalDot.classList.toggle('online', cama.online);
+	}
+}
+
+/* ================================================================
+   CONTADOR DE CAMAS ACTIVAS
+   ================================================================ */
+function actualizarContador() {
+	let activas = 0;
+	camas.forEach(c => { if (c.online) activas++; });
+	document.getElementById('num-camas-activas').textContent = activas;
+}
+
+/* ================================================================
+   UTILIDADES DE FORMATO
+   ================================================================ */
+
+function formatVal(val) {
+	if (typeof val === 'number') {
+		return Number.isInteger(val) ? val.toString() : val.toFixed(1);
+	}
+	return String(val);
+}
+
+function formatTsCorto(tsIso) {
+	try {
+		const d = new Date(tsIso);
+		return d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+	} catch {
+		return tsIso;
+	}
+}
+
+function formatPniTs(tsIso) {
+	try {
+		const d = new Date(tsIso);
+		return `últ. medición: ${d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+	} catch {
+		return '';
+	}
+}
+
+function escapeHtml(str) {
+	return String(str)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>

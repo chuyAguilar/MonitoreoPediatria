@@ -1,0 +1,91 @@
+/* ============================================================
+   VARIABLES Y RESET
+   ============================================================ */
+:root {
+	--color-bg:          #050b14;
+	--color-surface:     #0b1623;
+	--color-surface-2:   #0f1e30;
+	--color-border:      #1a2d45;
+	--color-border-glow: #1e3d5c;
+
+	--color-fc:    #00e676;   /* verde — FC */
+	--color-spo2:  #00e5ff;   /* cian  — SpO2 */
+	--color-fp:    #69f0ae;   /* verde claro — FP */
+	--color-fr:    #ffee58;   /* amarillo — FR */
+	--color-temp:  #f5f5f5;   /* blanco — Temp */
+	--color-pni:   #ff7043;   /* naranja — PNI */
+
+	--color-online:  #00e676;
+	--color-offline: #546e7a;
+	--color-warning: #ffd54f;
+
+	--color-text-primary:   #e8f0fe;
+	--color-text-secondary: #7b9db8;
+	--color-text-muted:     #3d5a73;
+
+	--radius-card:   14px;
+	--radius-inner:  8px;
+	--shadow-card:   0 4px 24px rgba(0,0,0,0.55);
+
+	--transition-fast: 0.15s ease;
+	--transition-med:  0.25s ease;
+}
+
+*, *::before, *::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html, body {
+	height: 100%;
+	background: var(--color-bg);
+	color: var(--color-text-primary);
+	overflow-x: hidden;
+}
+
+/* ============================================================
+   ANIMACIONES GLOBALES
+   ============================================================ */
+@keyframes pulse-dot {
+	0%, 100% { opacity: 1; }
+	50%       { opacity: 0.4; }
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
+@keyframes fade-in {
+	from { opacity: 0; }
+	to   { opacity: 1; }
+}
+
+@keyframes slide-up {
+	from { opacity: 0; transform: translateY(30px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes nuevo-dato {
+	0%   { opacity: 0.5; transform: scale(0.97); }
+	50%  { opacity: 1;   transform: scale(1.01); }
+	100% { opacity: 1;   transform: scale(1); }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+	width: 6px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--color-border);
+	border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--color-border-glow);
+}
