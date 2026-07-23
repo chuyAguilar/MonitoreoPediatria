@@ -1,9 +1,10 @@
 # Contrato de datos — signos vitales (Hito 2)
 
-Especificación del formato con el que viajan los signos vitales desde el edge (Raspberry) hasta la web. Es un **contrato**: la web se construye contra él y la fuente es intercambiable.
+Especificación del formato con el que viajan los signos vitales desde el edge hasta la web. Es un **contrato**: la web se construye contra él y la fuente es intercambiable (ver `DECISIONS.md` ADR-001). Versión vigente: **`1.1`** (ver §6).
 
-- **Hoy:** un simulador produce este formato.
-- **Mañana:** un adaptador lee el monitor real (Mindray uMEC10/uMEC12 por HL7/PDS) y produce **exactamente el mismo formato**. La web no cambia.
+- **Pipeline OCR** (paradigma actual, módulo `ocr/`): lee la pantalla del monitor y produce este formato con `origen: "ocr"` y `confianza` por signo.
+- **Simulador** (banco de pruebas): produce **exactamente el mismo formato**; sirve para probar la web sin hardware.
+- Un adaptador digital del monitor (HL7/PDS) seguiría siendo una fuente válida del mismo contrato si algún monitor lo permite (ADR-012).
 
 > Sin IA en esta etapa. Solo capturar/simular datos, transmitirlos junto al video y mostrarlos.
 
@@ -37,18 +38,18 @@ Tema `monitoreo/vitales/{cama_id}`, ~1 vez por segundo:
 
 ```json
 {
-  "contrato": "1.0",
+  "contrato": "1.1",
   "cama_id": "cama-01",
-  "device_id": "edge-01",
-  "ts": "2026-06-09T20:15:03Z",
-  "origen": "simulador",
+  "device_id": "jetson-01",
+  "ts": "2026-07-22T20:15:03Z",
+  "origen": "ocr",
   "signos": {
-    "fc":   { "valor": 142,  "unidad": "lpm" },
-    "spo2": { "valor": 97,   "unidad": "%" },
-    "fp":   { "valor": 141,  "unidad": "lpm" },
-    "fr":   { "valor": 48,   "unidad": "rpm" },
-    "temp": { "valor": 36.9, "unidad": "C" },
-    "pni":  { "sis": 66, "dia": 39, "media": 48, "unidad": "mmHg", "ts": "2026-06-09T20:10:00Z" }
+    "fc":   { "valor": 142,  "unidad": "lpm", "confianza": 0.98 },
+    "spo2": { "valor": 97,   "unidad": "%",   "confianza": 0.95 },
+    "fp":   { "valor": 141,  "unidad": "lpm", "confianza": 0.9 },
+    "fr":   { "valor": 48,   "unidad": "rpm", "confianza": 0.88 },
+    "temp": { "valor": 36.9, "unidad": "C",   "confianza": 0.97 },
+    "pni":  { "sis": 66, "dia": 39, "media": 48, "unidad": "mmHg", "ts": "2026-07-22T20:10:00Z", "confianza": 0.8 }
   }
 }
 ```
@@ -56,11 +57,11 @@ Tema `monitoreo/vitales/{cama_id}`, ~1 vez por segundo:
 ### Campos de cabecera
 | Campo | Tipo | Descripción |
 |-------|------|-------------|
-| `contrato` | string | Versión del contrato (`"1.0"`) |
+| `contrato` | string | Versión del contrato (`"1.1"`, ver §6) |
 | `cama_id` | string | Cama de origen |
 | `device_id` | string | Edge de origen |
 | `ts` | string | Fecha/hora UTC ISO-8601 del muestreo |
-| `origen` | string | `"simulador"` o `"umec10"` (de dónde salió el dato) |
+| `origen` | string | `"simulador"`, `"umec10"` u `"ocr"` (de dónde salió el dato) |
 
 ### Signos vitales (objeto `signos`)
 | Clave | Significado | Unidad | Rango neonatal típico |
@@ -72,10 +73,19 @@ Tema `monitoreo/vitales/{cama_id}`, ~1 vez por segundo:
 | `temp` | Temperatura | °C | 36.5–37.5 |
 | `pni` | Presión no invasiva (sis/dia/media) | mmHg | ~65/40, media ~50 |
 
+> **Nota sobre el "rango neonatal típico":** esta columna es **descriptiva** (qué valores
+> son normales en un neonato); **no** es un rango de validación. El pipeline OCR valida con
+> rangos de **plausibilidad fisiológica** más amplios, definidos en su perfil, cuyo único
+> fin es descartar lecturas basura del OCR sin ocultar valores anormales pero reales
+> (p. ej. una bradicardia de 80 lpm debe mostrarse). Ver `DECISIONS.md` ADR-013.
+
 Reglas:
 - Si un sensor no está conectado, su valor es `null` (la web lo muestra como "--").
 - `pni` es **intermitente** (se mide cada cierto tiempo): lleva su propio `ts` con la hora de la última medición; entre mediciones se repite el último valor.
 - Unidades fijas en este contrato (no se cambian sin subir la versión).
+- `confianza` (0–1) es **opcional** por signo desde `1.1`: qué tan segura fue la lectura
+  (la produce la fuente OCR, que es falible por diseño). Las fuentes digitales pueden
+  omitirla. La web actual la ignora, así que su ausencia o presencia no rompe nada.
 
 ## 4. Mensaje de estado (JSON)
 
@@ -99,7 +109,12 @@ RTSP in: rtsp://<servidor>:8554/cama-01   (lo publica el edge)
 Así la web, para `cama-01`, sabe que el video está en `/cama-01` y los datos en `monitoreo/vitales/cama-01`.
 
 ## 6. Versionado
-El campo `contrato` permite evolucionar sin romper. Cambios compatibles (añadir un signo nuevo) mantienen `1.x`; cambios incompatibles suben a `2.0`.
+El campo `contrato` permite evolucionar sin romper. Cambios compatibles (añadir un signo o un campo opcional) mantienen `1.x`; cambios incompatibles (renombrar campos, cambiar unidades) suben a `2.0`.
+
+| Versión | Fecha | Cambios |
+|---------|-------|---------|
+| `1.0` | jun 2026 | Formato inicial (Hito 2). |
+| `1.1` | jul 2026 | `origen` puede valer `"ocr"`; cada signo puede llevar `confianza` (0–1) opcional. **Retrocompatible**: la web construida contra `1.0` ignora los campos nuevos. |
 
 ## 7. Futuro (fuera del Hito 2, anotado)
 - **Curvas** (ECG, pletismografía, respiración) a mayor frecuencia, en un tema aparte `monitoreo/ondas/{cama_id}`.

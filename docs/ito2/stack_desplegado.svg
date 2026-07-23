@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="276" viewBox="0 0 680 276" role="img">
+<title>Stack desplegado del Hito 2: servicios y puertos por maquina</title>
+<desc>El edge publica datos por MQTT 1883 y video por RTSP 8554 al servidor (Mosquitto, MediaMTX, web 8080); el navegador del mando recibe web 8080, datos por MQTT-WS 9001 y video por WebRTC 8889.</desc>
+<style>
+text{font-family:'Helvetica Neue',Arial,sans-serif}
+.ts{font-size:12px;fill:#555}
+.th{font-size:13px;font-weight:500;fill:#1a1a1a}
+.title{font-size:18px;font-weight:500;fill:#111}
+.sub{font-size:12px;fill:#555}
+.edge{fill:#e8f0fe;stroke:#3f76c4;stroke-width:1.5}
+.srv{fill:#e2f3f0;stroke:#2a9d8f;stroke-width:1.5}
+.view{fill:#fbf1dd;stroke:#d8a32c;stroke-width:1.5}
+.arr{stroke:#444;stroke-width:1.5;fill:none}
+.port{font-size:11px;fill:#444}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="0" y="0" width="680" height="276" fill="#ffffff"/>
+<text x="40" y="30" class="title">Hito 2 — stack desplegado (servicios y puertos)</text>
+<text x="40" y="50" class="sub">Edge publica datos y video al servidor; el navegador del mando los recibe.</text>
+
+<rect x="40" y="100" width="150" height="140" rx="10" class="edge"/>
+<text x="115" y="126" class="th" text-anchor="middle">edge · simulador</text>
+<text x="115" y="150" class="ts" text-anchor="middle">Python + ffmpeg</text>
+<text x="115" y="170" class="ts" text-anchor="middle">datos + webcam</text>
+<text x="115" y="190" class="ts" text-anchor="middle">por sala: varias</text>
+<text x="115" y="222" class="ts" text-anchor="middle">100.72.226.69</text>
+
+<rect x="265" y="100" width="150" height="140" rx="10" class="srv"/>
+<text x="340" y="126" class="th" text-anchor="middle">servidor · Gateway</text>
+<text x="340" y="150" class="ts" text-anchor="middle">Mosquitto (MQTT)</text>
+<text x="340" y="170" class="ts" text-anchor="middle">MediaMTX (video)</text>
+<text x="340" y="190" class="ts" text-anchor="middle">web estatica</text>
+<text x="340" y="222" class="ts" text-anchor="middle">100.110.157.112</text>
+
+<rect x="490" y="100" width="150" height="140" rx="10" class="view"/>
+<text x="565" y="126" class="th" text-anchor="middle">mando · navegador</text>
+<text x="565" y="150" class="ts" text-anchor="middle">ve el dashboard</text>
+<text x="565" y="170" class="ts" text-anchor="middle">grid de camas</text>
+<text x="565" y="222" class="ts" text-anchor="middle">100.69.158.31</text>
+
+<line class="arr" x1="190" y1="155" x2="265" y2="155" marker-end="url(#arrow)"/>
+<text x="227" y="149" class="port" text-anchor="middle">MQTT :1883</text>
+<line class="arr" x1="190" y1="200" x2="265" y2="200" marker-end="url(#arrow)"/>
+<text x="227" y="194" class="port" text-anchor="middle">RTSP :8554</text>
+
+<line class="arr" x1="415" y1="140" x2="490" y2="140" marker-end="url(#arrow)"/>
+<text x="452" y="134" class="port" text-anchor="middle">web :8080</text>
+<line class="arr" x1="415" y1="175" x2="490" y2="175" marker-end="url(#arrow)"/>
+<text x="452" y="169" class="port" text-anchor="middle">datos :9001</text>
+<line class="arr" x1="415" y1="210" x2="490" y2="210" marker-end="url(#arrow)"/>
+<text x="452" y="204" class="port" text-anchor="middle">video :8889</text>
+
+<line x1="40" y1="256" x2="640" y2="256" stroke="#cfcfcf" stroke-width="1"/>
+<text x="40" y="272" class="ts">Todo cifrado sobre Tailscale. Servicios del servidor arrancan solos (systemd).</text>
+</svg>
