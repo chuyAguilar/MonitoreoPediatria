@@ -1,0 +1,275 @@
+# DECISIONS — Registro de Decisiones de Arquitectura (ADRs)
+
+> Por qué el sistema está hecho como está. Cada entrada es un ADR: contexto, decisión y
+> consecuencias. Para el *cómo* ver [`ARCHITECTURE.md`](ARCHITECTURE.md); para reglas y
+> estado ver [`CONTEXT.md`](CONTEXT.md).
+>
+> **Estado:** `Aceptada` (vigente) · `Reemplazada` (ya no se aplica) · `Propuesta` (sin cerrar).
+
+| # | Decisión | Estado |
+|---|---|---|
+| ADR-001 | Fuente de datos intercambiable por contrato | Aceptada |
+| ADR-002 | Captura por video + OCR (no egress digital) | Aceptada |
+| ADR-003 | Contrato `1.1`: `origen: ocr` + `confianza` opcional | Aceptada |
+| ADR-004 | Jetson Orin Nano como edge | Aceptada |
+| ADR-005 | MQTT (Mosquitto) para vitales | Aceptada |
+| ADR-006 | MediaMTX + RTSP/WebRTC (WHEP) para video | Aceptada |
+| ADR-007 | `cama_id` como clave de unión datos↔video | Aceptada |
+| ADR-008 | Web Next.js export estático, auto-alojada | Aceptada |
+| ADR-009 | Red privada Tailscale | Aceptada |
+| ADR-010 | Cámaras normales por cama (no profundidad) | Aceptada |
+| ADR-011 | Simulador conservado como banco de pruebas | Aceptada |
+| ADR-012 | Adaptador HL7/PDS del monitor real | Reemplazada |
+| ADR-013 | OCR iteración 1: motor de plantilla + perfiles ROI en JSON | Aceptada |
+
+---
+
+## ADR-001 — Fuente de datos intercambiable por contrato
+
+**Estado:** Aceptada (jun 2026, reforzada jul 2026)
+
+**Contexto.** El dato del signo vital podía venir de fuentes muy distintas (simulador, monitor
+digital, OCR) y esas fuentes cambiarían con el tiempo. No queríamos reescribir el servidor ni
+la web cada vez.
+
+**Decisión.** Definir un **contrato JSON** (ver `docs/ito2/CONTRATO_DATOS.md`) contra el cual
+se construye la web. La fuente que publica ese contrato es intercambiable. Cualquier productor
+que emita el contrato por MQTT es válido.
+
+**Consecuencias.** (+) El cambio de paradigma jun→jul (de digital a OCR) **no tocó** servidor ni
+web. (+) Se puede correr simulador y OCR indistintamente. (−) Hay que disciplinar cambios del
+contrato con versionado (ADR-003).
+
+---
+
+## ADR-002 — Captura por video + OCR en lugar de egress digital
+
+**Estado:** Aceptada (jul 2026) — reemplaza el enfoque de ADR-012
+
+**Contexto.** El plan original era sacar los signos del monitor Mindray uMEC10 por su salida
+digital (HL7 v2.3.1 / PDS sobre TCP). Eso depende de: que el puerto esté habilitado, que PDS
+esté licenciado/activo, y posiblemente middleware eGateway. Es específico de marca/modelo y no
+generaliza a monitores de otros fabricantes en un hospital heterogéneo.
+
+**Decisión.** Obtener los signos **leyendo la pantalla del monitor con OCR**: la salida HDMI del
+monitor entra por una **capturadora** en la Jetson, y un pipeline de visión reconoce los
+números.
+
+**Consecuencias.**
+- (+) **Agnóstico de marca/modelo:** funciona con cualquier monitor que tenga salida de video.
+- (+) No requiere licencias ni protocolos propietarios del fabricante.
+- (+) No intrusivo: no se conecta nada al monitor clínico salvo un cable de video.
+- (−) El OCR **puede leer mal** → obliga a validar rango + reportar confianza (ADR-003).
+- (−) Más carga de cómputo en el edge que un simple parse de HL7 → motiva la Jetson (ADR-004).
+- (−) Depende del layout de la pantalla; cambiar de modelo de monitor exige reajustar regiones.
+
+---
+
+## ADR-003 — Contrato `1.1`: `origen: "ocr"` + `confianza` opcional
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** Con OCR, una lectura errónea (p. ej. un "180" fantasma por reflejo o parpadeo) no
+debe presentarse igual que una lectura sólida. El simulador nunca necesitó esto.
+
+**Decisión.** Subir el contrato a **`1.1`**, cambio **compatible hacia atrás**:
+- `origen` puede valer `"ocr"` (además de `"simulador"` / `"umec10"`).
+- Cada signo puede llevar un campo **`confianza` (0–1) opcional**.
+
+**Consecuencias.** (+) La web actual **ignora** `confianza` → no se rompe nada hoy. (+) Deja la
+puerta abierta a que la web resalte lecturas dudosas en el futuro. (−) El pipeline OCR debe
+producir un score de confianza real, no un valor fijo.
+
+**Alternativa descartada.** Mantener `1.0` idéntico sin confianza: más simple, pero perdería la
+señal de calidad justo cuando la fuente pasa a ser falible.
+
+---
+
+## ADR-004 — Jetson Orin Nano como edge
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** El nuevo edge debe correr OCR sobre video **y** encodear varias cámaras a la vez,
+por varias camas. Una Raspberry Pi o una laptop vieja se quedan cortas para inferencia de visión
+en tiempo real.
+
+**Decisión.** Usar **Jetson Orin Nano** (GPU con aceleración CUDA/TensorRT) como edge. Cada
+Jetson cubre **N camas**; se escala añadiendo Jetsons.
+
+**Consecuencias.** (+) GPU local para OCR/visión sin saturar CPU. (+) Encode por hardware para el
+video. (−) Costo/unidad mayor que una Raspberry. (−) Ecosistema JetPack/L4T con versiones de
+CUDA/OpenCV específicas → cuidar compatibilidad de librerías.
+
+---
+
+## ADR-005 — MQTT (Mosquitto) para los signos vitales
+
+**Estado:** Aceptada (jun 2026)
+
+**Contexto.** Muchos edges publicando datos de muchas camas hacia un servidor y una web que
+consume en tiempo real.
+
+**Decisión.** Transportar las vitales por **MQTT** con **Mosquitto** en el servidor
+(`1883` mqtt, `9001` websockets). Topics `monitoreo/vitales/{cama_id}` y
+`monitoreo/estado/{cama_id}`, QoS 1 y **retained**. La web habla MQTT sobre WebSocket.
+
+**Consecuencias.** (+) Modelo pub/sub encaja con N publicadores. (+) `retained` = la web ve el
+último valor apenas conecta. (+) La web descubre camas suscribiéndose a `monitoreo/vitales/+`.
+(−) Broker es una pieza más que operar. (−) `allow_anonymous true` es solo para desarrollo;
+producción necesita auth (ver `CONTEXT.md`).
+
+**Alternativa descartada.** WebSocket propio: más código de servidor, sin retención ni fan-out
+gratis.
+
+---
+
+## ADR-006 — MediaMTX + RTSP/WebRTC (WHEP) para el video
+
+**Estado:** Aceptada (jun 2026)
+
+**Contexto.** Video en vivo de baja latencia por cama, visible en el navegador sin plugins.
+
+**Decisión.** El edge empuja cada cámara por **RTSP** a **MediaMTX** (`8554`), que lo re-sirve
+por **WebRTC (WHEP)** (`8889`). El servidor **no transcodifica** (hardware Celeron limitado).
+
+**Consecuencias.** (+) <1 s de latencia en el navegador (validado en Hito 1). (+) Un solo
+destino para el mando. (−) `404` en WHEP significa "aún no hay publisher" → la web reintenta cada
+5 s (`WHEP_RETRY_MS`). (−) Sin transcodificar, la calidad/lag dependen de lo que emita el edge.
+
+---
+
+## ADR-007 — `cama_id` como clave de unión datos↔video
+
+**Estado:** Aceptada (jun 2026)
+
+**Contexto.** Cada cama tiene datos (MQTT) y video (WebRTC) por caminos distintos; la web debe
+unirlos sin ambigüedad y descubrir camas dinámicamente.
+
+**Decisión.** El **`cama_id`** es a la vez el sufijo del topic MQTT **y** el nombre del stream en
+MediaMTX. Para `cama-01`: datos en `monitoreo/vitales/cama-01`, video en `/cama-01`.
+
+**Consecuencias.** (+) La web arma cada tarjeta con solo el `cama_id`. (+) Añadir una cama no
+requiere configurar la web. (−) Disciplina de nombres obligatoria (`cama-NN`, dos dígitos).
+
+---
+
+## ADR-008 — Web Next.js export estático, auto-alojada
+
+**Estado:** Aceptada (jun 2026)
+
+**Contexto.** La web se prototipó en HTML plano (con Antigravity) y creció; se quería mantenible
+y desplegable en un hospital **sin internet**.
+
+**Decisión.** Migrar a **Next.js 15** (App Router, TS, `output: 'export'`) y **auto-alojar** el
+build estático (`out/`) en el servidor vía systemd (`python3 -m http.server 8080`). **No Vercel.**
+La SPA habla directo a Mosquitto y MediaMTX; sin backend por ahora. Config por `NEXT_PUBLIC_*`.
+
+**Consecuencias.** (+) Sin dependencia de internet ni de Vercel. (+) Evita el bloqueo de contenido
+mixto (HTTPS→ws/http) al servir todo por http en la red privada. (−) El build conviene hacerlo en
+Windows/Mac (más potentes) y copiar `out/` al Celeron. (−) Sin backend, no hay auth ni
+persistencia todavía.
+
+---
+
+## ADR-009 — Red privada Tailscale
+
+**Estado:** Aceptada (jun 2026)
+
+**Contexto.** Servidor, edges y mando pueden estar en redes físicas distintas; el tráfico
+(video + datos de pacientes) no debe ir por internet abierto.
+
+**Decisión.** Unir todas las máquinas en una **tailnet** (WireGuard). Direcciones `100.x` estables
+entre máquinas.
+
+**Consecuencias.** (+) Cifrado extremo a extremo y direccionamiento estable sin abrir puertos.
+(−) Depende del coordinador de Tailscale; para un despliegue 100% offline habría que evaluar
+Headscale o VPN propia.
+
+---
+
+## ADR-010 — Cámaras normales por cama (no profundidad)
+
+**Estado:** Aceptada (jun 2026)
+
+**Contexto.** La cámara de profundidad Orbbec Femto Bolt es pesada (USB3 + encode) y cara; para
+el video de vigilancia por cama no hace falta profundidad.
+
+**Decisión.** Usar **cámaras/webcams normales**, una por cama. La Femto se reserva para camas que
+a futuro requieran respiración por profundidad + IA.
+
+**Consecuencias.** (+) Edge más ligero, más camas por Jetson. (−) Sin dato de profundidad hasta
+que se reintroduzca la Femto donde se necesite.
+
+---
+
+## ADR-011 — Simulador conservado como banco de pruebas
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** Con el paso a OCR, el simulador dejó de ser la fuente de producción. Pero permite
+probar servidor + web **sin** montar Jetson/capturadora/monitor.
+
+**Decisión.** **Conservar** `simulador/` como herramienta de desarrollo/prueba. Emite el mismo
+contrato, así que es un sustituto válido del OCR para validar la web.
+
+**Consecuencias.** (+) Se puede desarrollar la web sin hardware. (+) Sirve de referencia del
+contrato. (−) Hay que mantenerlo alineado si el contrato evoluciona.
+
+---
+
+## ADR-012 — Adaptador HL7/PDS del monitor real
+
+**Estado:** Reemplazada por ADR-002 (jul 2026)
+
+**Contexto.** Se planeó un traductor HL7 v2.3.1 / Mindray PDS → contrato JSON, leyendo el monitor
+uMEC10 por su salida digital.
+
+**Decisión (original).** Adaptador que consumiera PDS/MLLP y publicara el contrato.
+
+**Por qué se reemplazó.** Depende de licencias/middleware y no generaliza a otros monitores; el
+enfoque OCR (ADR-002) es agnóstico de marca. **No se descarta del todo**: si en alguna cama el
+egress digital está disponible y es confiable, un adaptador HL7 sigue siendo una fuente válida del
+mismo contrato (por ADR-001). Queda como opción, no como camino principal.
+
+---
+
+## ADR-013 — OCR iteración 1: motor de plantilla + perfiles ROI en JSON
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** Primera iteración del módulo `ocr/` (offline, imagen fija → contrato 1.1).
+Había que elegir un motor OCR para arrancar **sin muestra real del monitor** (se comparó
+PaddleOCR, Tesseract y un lector de plantilla/7-segmentos), un formato para los perfiles de
+ROI, y una política de validación de rangos coherente con `CONTEXT.md` §1.
+
+**Decisión.**
+1. **Motor de arranque: lector de plantilla de dígitos 7-segmentos** (OpenCV puro,
+   `ocr/motor/plantilla.py`). Cero dependencias nuevas, determinista, y con confianza real y
+   explicable (índice de Jaccard contra el atlas de dígitos). **Es andamiaje de la
+   iteración 1**: valida el pipeline contra la imagen mock, y **probablemente será
+   reemplazado en producción** (candidato principal: PaddleOCR sobre la GPU de la Jetson)
+   cuando exista muestra real del monitor. Lo que garantiza que ese reemplazo no toque el
+   resto del módulo es la **interfaz `LectorOCR`** (`ocr/motor/base.py`): perfiles,
+   preprocesamiento, validación y contrato solo conocen la interfaz, no el motor.
+2. **Perfiles de ROI en JSON** (no YAML): mismo formato que el contrato, `json` es stdlib
+   (cero dependencias) y los perfiles pueden derivarse por código (el del mock se genera con
+   `ocr/mock/generar_mock.py`; un test verifica que el archivo no se desincronice).
+3. **Validación por rangos de PLAUSIBILIDAD FISIOLÓGICA, no por los "típicos" del
+   contrato.** El "rango neonatal típico" de `CONTRATO_DATOS.md` (p. ej. FC 120–160) es
+   **descriptivo** — documenta qué valores son normales. La validación OCR usa rangos
+   **amplios** definidos en el perfil (p. ej. FC 50–250) cuyo único fin es descartar basura
+   de lectura (una FC de 999 por dígito fantasma). **No son lo mismo**: anular todo lo que
+   salga del rango típico ocultaría valores anormales pero reales (una bradicardia de
+   80 lpm) justo cuando más importan (`CONTEXT.md` §1: un neonato en UCI siempre tendrá
+   lecturas atípicas). Lo "típico" queda para la futura lógica de alarmas.
+
+**Reglas de seguridad asociadas.** Valor no reconocido, con confianza baja o fuera del rango
+de plausibilidad → `null` + `confianza 0` (nunca inventar un número). La PNI se emite
+completa (sis/dia/media) o `null`: una tensión parcial es clínicamente engañosa.
+
+**Consecuencias.** (+) El pipeline completo es testeable hoy, offline y sin hardware (34
+tests contra el mock). (+) Cambiar de motor es implementar una clase. (−) El motor de
+plantilla solo demuestra el pipeline, no la robustez ante monitores reales: la decisión del
+motor de producción queda **pendiente de la muestra real** (se registrará en un ADR nuevo).
+(−) El mock y el motor comparten el render de dígitos (`ocr/digitos.py`): los tests validan
+integración, no reconocimiento en condiciones adversas.

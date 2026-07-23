@@ -1,0 +1,123 @@
+{
+  "perfil": "monitor-mock-v1",
+  "notas": "Derivado automaticamente por ocr/mock/generar_mock.py; no editar a mano.",
+  "resolucion": [
+    1280,
+    720
+  ],
+  "signos": {
+    "fc": {
+      "roi": [
+        928,
+        58,
+        217,
+        120
+      ],
+      "tipo": "int",
+      "unidad": "lpm",
+      "rango": [
+        50,
+        250
+      ]
+    },
+    "spo2": {
+      "roi": [
+        928,
+        228,
+        192,
+        108
+      ],
+      "tipo": "int",
+      "unidad": "%",
+      "rango": [
+        50,
+        100
+      ]
+    },
+    "fp": {
+      "roi": [
+        928,
+        378,
+        153,
+        88
+      ],
+      "tipo": "int",
+      "unidad": "lpm",
+      "rango": [
+        50,
+        250
+      ]
+    },
+    "fr": {
+      "roi": [
+        928,
+        508,
+        153,
+        88
+      ],
+      "tipo": "int",
+      "unidad": "rpm",
+      "rango": [
+        10,
+        120
+      ]
+    },
+    "temp": {
+      "roi": [
+        928,
+        628,
+        155,
+        80
+      ],
+      "tipo": "float",
+      "unidad": "C",
+      "rango": [
+        30.0,
+        43.0
+      ],
+      "decimales": 1
+    },
+    "pni_sis": {
+      "roi": [
+        68,
+        588,
+        153,
+        88
+      ],
+      "tipo": "int",
+      "unidad": "mmHg",
+      "rango": [
+        20,
+        200
+      ]
+    },
+    "pni_dia": {
+      "roi": [
+        318,
+        588,
+        153,
+        88
+      ],
+      "tipo": "int",
+      "unidad": "mmHg",
+      "rango": [
+        10,
+        150
+      ]
+    },
+    "pni_media": {
+      "roi": [
+        568,
+        588,
+        153,
+        88
+      ],
+      "tipo": "int",
+      "unidad": "mmHg",
+      "rango": [
+        15,
+        180
+      ]
+    }
+  }
+}

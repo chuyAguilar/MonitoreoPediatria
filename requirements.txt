@@ -9,3 +9,6 @@ matplotlib
 
 # Mensajería de datos (simulador → servidor)
 paho-mqtt
+
+# Tests (ocr/tests)
+pytest
