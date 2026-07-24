@@ -17,6 +17,11 @@
 - **El dato puede ser erróneo.** Con OCR la lectura es *falible* por diseño. Los valores llevan
   `confianza` y se validan por rango; el sistema nunca debe presentar una lectura dudosa como
   certera.
+- **Ni parcial ni incoherente.** La presión (PNI) se publica con sis/dia/media completas y en
+  orden fisiológico, o no se publica. Un trío imposible es tan engañoso como uno incompleto, y
+  como los rangos de los tres componentes se solapan, cada número puede ser plausible por
+  separado siendo el conjunto absurdo. Vale como principio general: al validar un dato
+  compuesto, comprobar también la coherencia **entre** sus partes.
 - **Multi-cama desde el diseño.** Toda dato y todo video llevan `cama_id`. Nada es "la única
   cama"; el código no debe asumir una sola cama/cámara/Jetson.
 - **Alarmas con criterio, no ruido.** La lógica de alertas (futura) debe disparar **solo ante
@@ -102,11 +107,16 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
 - Simulador emitiendo el contrato; camino de datos validado.
 
 **En construcción (paradigma nuevo):**
-- Módulo **`ocr/`**: la **iteración 1 está hecha** — lectura offline de imagen fija →
-  contrato `1.1` con `confianza` real por signo, con mock y tests (ver `ocr/README.md`,
-  ADR-013). Pendiente de las siguientes iteraciones: capturadora en vivo (V4L2),
-  publicación MQTT, multi-cama en la Jetson, y decidir el motor OCR de producción cuando
-  haya muestra real del monitor.
+- Módulo **`ocr/`**: **iteraciones 1 y 2 hechas** — lectura offline de imagen fija →
+  contrato `1.1` con `confianza` real por signo; perfiles con signo ausente y campo
+  combinado (PNI `120/75`); perfil calibrado del monitor real de pruebas (SimCore) y
+  herramienta de calibración (ver `ocr/README.md`, ADR-013/014/015).
+- **Bloqueante para producción:** el motor OCR incluido (plantilla 7-seg) es andamiaje y
+  **no lee tipografía de monitor real** (5/17 dígitos, ADR-014). Siguiente paso: evaluar
+  **PaddleOCR** sobre la GPU de la Jetson y registrar el ADR del motor de producción.
+  La red de seguridad sí quedó validada con datos reales: no se publicó ningún valor
+  erróneo, todo salió `null`.
+- Después: capturadora en vivo (V4L2), publicación MQTT y multi-cama en la Jetson.
 - Reproducción del **video externo del monitor** en la Mac como fuente de prueba del OCR.
 
 **Pendiente / futuro (no empezado):**

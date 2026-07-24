@@ -66,13 +66,34 @@ def leer_imagen(
         ts = _ahora_iso()
 
     lecturas = {}
+    # Caché por ROI: dos signos pueden compartir el mismo recorte (p. ej. la
+    # sistólica y la diastólica de un campo "120/75"). Además de ahorrar una
+    # pasada de OCR, garantiza que ambos componentes salgan de la MISMA lectura.
+    cache_roi = {}
     for nombre, cfg in perfil.signos.items():
-        recorte = preproceso.recortar_roi(imagen, cfg.roi)
-        binaria = preproceso.binarizar(recorte)
-        texto, confianza = motor.leer(binaria)
+        if not cfg.presente:
+            # El monitor no muestra este signo: null sin intentar leer píxeles.
+            lecturas[nombre] = (None, 0.0)
+            continue
+
+        if cfg.roi not in cache_roi:
+            binaria = preproceso.binarizar(preproceso.recortar_roi(imagen, cfg.roi))
+            if preproceso.tinta_en_el_borde(binaria):
+                # El número toca el borde de su caja: puede estar cortado y no
+                # hay forma de saber qué falta. Se descarta entero.
+                cache_roi[cfg.roi] = (None, 0.0)
+            else:
+                cache_roi[cfg.roi] = motor.leer(binaria)
+        texto, confianza = cache_roi[cfg.roi]
+        confianza = _confianza_valida(confianza)
+
+        if cfg.separador is not None:
+            texto = _extraer_parte(texto, cfg.separador, cfg.parte)
+
         valor = _interpretar(texto, cfg.tipo)
         if (
             valor is None
+            or confianza is None
             or confianza < umbral_confianza
             or not (cfg.rango[0] <= valor <= cfg.rango[1])
         ):
@@ -81,6 +102,45 @@ def leer_imagen(
             lecturas[nombre] = (valor, round(float(confianza), 3))
 
     return contrato.construir_mensaje(cama_id, device_id, ts, lecturas)
+
+
+def _confianza_valida(confianza):
+    """Normaliza la confianza del motor; None si incumple la interfaz.
+
+    `LectorOCR` documenta confianza en [0, 1], pero el motor es intercambiable y
+    un adaptador mal cableado podría devolver otra escala (Tesseract expone 0–100)
+    o un NaN. Como el umbral se aplica con `confianza < umbral`, una escala 0–100
+    dejaría pasar TODAS las lecturas y un NaN también (toda comparación con NaN es
+    falsa): la puerta de seguridad quedaría desactivada en silencio.
+
+    Deliberadamente **no se recorta al rango**: convertir un 7.5 en 1.0 haría
+    pasar por óptima la peor lectura posible. Fuera de dominio se descarta.
+    """
+    # `bool` es subclase de `int`: sin esta guarda, un True colaría como 1.0,
+    # es decir como la lectura más confiable posible.
+    if isinstance(confianza, bool) or not isinstance(confianza, (int, float)):
+        return None
+    valor = float(confianza)
+    # La comparación también descarta NaN, que es falsa contra cualquier cosa.
+    if not 0.0 <= valor <= 1.0:
+        return None
+    return valor
+
+
+def _extraer_parte(texto, separador: str, parte: int):
+    """Parte el texto de un campo combinado y devuelve el componente pedido.
+
+    Exige exactamente dos componentes (p. ej. "120/75"). Si el separador no
+    aparece —porque el motor no lo reconoció— el texto se descarta entero: leer
+    "12075" como si fuera una presión sería justo el tipo de número inventado
+    que el módulo no debe producir.
+    """
+    if not texto:
+        return None
+    partes = texto.split(separador)
+    if len(partes) != 2:
+        return None
+    return partes[parte]
 
 
 def _interpretar(texto, tipo: str):

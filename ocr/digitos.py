@@ -76,13 +76,47 @@ def dibujar_punto(alto: int) -> np.ndarray:
     return lienzo
 
 
+def ancho_barra(alto: int) -> int:
+    return max(4, round(alto * 0.45))
+
+
+def dibujar_barra(alto: int) -> np.ndarray:
+    """Barra '/': diagonal de abajo-izquierda a arriba-derecha.
+
+    Separa los componentes de un campo combinado (p. ej. la PNI "120/75").
+    """
+    ancho = ancho_barra(alto)
+    grosor = grosor_segmento(alto)
+    lienzo = np.zeros((alto, ancho), dtype=np.uint8)
+    recorrido = ancho - grosor
+    for y in range(alto):
+        x0 = round(recorrido * (alto - 1 - y) / max(1, alto - 1))
+        lienzo[y, x0:x0 + grosor] = 255
+    return lienzo
+
+
+def dibujar_glifo(caracter: str, alto: int) -> np.ndarray:
+    """Despacha al dibujo que corresponda: dígito, punto decimal o barra."""
+    if caracter == ".":
+        return dibujar_punto(alto)
+    if caracter == "/":
+        return dibujar_barra(alto)
+    return dibujar_digito(caracter, alto)
+
+
+def ancho_glifo(caracter: str, alto: int) -> int:
+    if caracter == ".":
+        return grosor_segmento(alto)
+    if caracter == "/":
+        return ancho_barra(alto)
+    return ancho_digito(alto)
+
+
 def dibujar_numero(texto: str, alto: int) -> np.ndarray:
-    """Renderiza una cadena de '0'-'9' y '.' en un renglón, 255 sobre 0."""
+    """Renderiza una cadena de '0'-'9', '.' y '/' en un renglón, 255 sobre 0."""
     if not texto:
         raise ValueError("Texto vacío")
-    glifos = [
-        dibujar_punto(alto) if c == "." else dibujar_digito(c, alto) for c in texto
-    ]
+    glifos = [dibujar_glifo(c, alto) for c in texto]
     sep = separacion(alto)
     ancho_total = sum(g.shape[1] for g in glifos) + sep * (len(glifos) - 1)
     lienzo = np.zeros((alto, ancho_total), dtype=np.uint8)
@@ -97,7 +131,5 @@ def ancho_numero(texto: str, alto: int) -> int:
     """Ancho en píxeles que ocuparía dibujar_numero(texto, alto)."""
     if not texto:
         return 0
-    anchos = [
-        grosor_segmento(alto) if c == "." else ancho_digito(alto) for c in texto
-    ]
+    anchos = [ancho_glifo(c, alto) for c in texto]
     return sum(anchos) + separacion(alto) * (len(texto) - 1)

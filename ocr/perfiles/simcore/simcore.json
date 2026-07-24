@@ -1,0 +1,124 @@
+{
+  "perfil": "simcore-v1",
+  "notas": "SimCore (sim.healthcore.org.uk/monitor/demo) a pantalla completa 1920x1080. ROIs calibradas sobre frame_simcore.png con ocr/herramientas/calibrar.py. Cada caja encuadra SOLO el numero: las etiquetas y unidades (bpm, %, /min, C, mmHg, MAP) quedan fuera a proposito. Los rangos son de plausibilidad fisiologica (ADR-013), no los tipicos del contrato.",
+  "resolucion": [
+    1920,
+    1080
+  ],
+  "signos": {
+    "fc": {
+      "roi": [
+        1690,
+        45,
+        225,
+        100
+      ],
+      "tipo": "int",
+      "unidad": "lpm",
+      "rango": [
+        20,
+        300
+      ],
+      "notas": "Alineado a la derecha; el margen para un tercer digito crece hacia la izquierda. La etiqueta 'bpm' empieza en y=151, fuera de la caja."
+    },
+    "spo2": {
+      "roi": [
+        898,
+        898,
+        116,
+        82
+      ],
+      "tipo": "int",
+      "unidad": "%",
+      "rango": [
+        50,
+        100
+      ],
+      "notas": "Alineado a la izquierda con el '%' pegado a la derecha (x=1021): la caja corta antes. Limitacion conocida: un valor de 3 digitos (SpO2 100) no cabe en esta caja. No produce un dato falso: la tinta tocaria el borde y el lector descarta la lectura (null), pero se pierde el signo. Revisar con capturas en vivo (ADR-015)."
+    },
+    "fp": {
+      "presente": false,
+      "notas": "SimCore no muestra frecuencia de pulso. Sale siempre null + confianza 0, sin intentar OCR."
+    },
+    "fr": {
+      "roi": [
+        10,
+        900,
+        108,
+        80
+      ],
+      "tipo": "int",
+      "unidad": "rpm",
+      "rango": [
+        3,
+        120
+      ],
+      "notas": "La unidad '/min' empieza en x=124 y queda fuera: su '/' se confundiria con el separador de un campo combinado."
+    },
+    "temp": {
+      "roi": [
+        900,
+        652,
+        196,
+        84
+      ],
+      "tipo": "float",
+      "unidad": "C",
+      "rango": [
+        25.0,
+        45.0
+      ],
+      "decimales": 1,
+      "notas": "Incluye el punto decimal (y=708-724). El simbolo de grados empieza en x=1107, fuera."
+    },
+    "pni_sis": {
+      "roi": [
+        10,
+        634,
+        305,
+        82
+      ],
+      "tipo": "int",
+      "unidad": "mmHg",
+      "rango": [
+        30,
+        300
+      ],
+      "separador": "/",
+      "parte": 0,
+      "notas": "Campo combinado 'SIS/DIA' (120/75). Mismo ROI que pni_dia; se lee una vez y se parte. La tinta ocupa x=23..302 de una caja que acaba en 315: solo caben 6 glifos, asi que una diastolica de 3 digitos (120/100) no entra. No produce un dato falso -tocaria el borde y se descarta-, pero se pierde la presion. Es el limite mas serio de este perfil: ver ADR-015."
+    },
+    "pni_dia": {
+      "roi": [
+        10,
+        634,
+        305,
+        82
+      ],
+      "tipo": "int",
+      "unidad": "mmHg",
+      "rango": [
+        10,
+        200
+      ],
+      "separador": "/",
+      "parte": 1,
+      "notas": "Segunda mitad del campo combinado. La caja termina en y=716, antes de 'MAP' (y=721)."
+    },
+    "pni_media": {
+      "roi": [
+        85,
+        716,
+        55,
+        32
+      ],
+      "tipo": "int",
+      "unidad": "mmHg",
+      "rango": [
+        15,
+        250
+      ],
+      "notas": "Solo el numero de 'MAP 90': las letras MAP terminan en x=81 y quedan fuera."
+    }
+  }
+}

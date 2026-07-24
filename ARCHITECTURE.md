@@ -211,27 +211,30 @@ Correspondencia con el video: el `cama_id` **es** el nombre del stream —
 capture/        Captura camara Femto Bolt (Hito 1 / profundidad a futuro)
 simulador/      Simulador legacy: emite el contrato por MQTT + video webcam.
                 Ahora sirve para probar la web SIN Jetson.
-ocr/            Lectura de signos por OCR (iteracion 1: offline sobre imagen fija)
+ocr/            Lectura de signos por OCR (offline sobre imagen fija)
   lector.py       Orquestador: imagen + perfil de ROIs -> mensaje contrato 1.1
   cli.py          CLI: python -m ocr.cli --imagen ... --perfil ...
   contrato.py     Construccion del JSON 1.1 (unidades fijas, PNI todo-o-nada)
-  perfiles.py     Carga/validacion de perfiles de ROI (JSON declarativo por monitor)
+  perfiles.py     Carga/validacion de perfiles (ROI, signo ausente, campo combinado)
   preproceso.py   Recorte ROI, gris, umbral Otsu, normalizacion
-  digitos.py      Render de digitos 7 segmentos (compartido mock <-> motor)
+  digitos.py      Render de digitos 7 segmentos y '/' (compartido mock <-> motor)
   motor/          Motores OCR intercambiables (base.py = interfaz LectorOCR;
-                  plantilla.py = andamiaje iteracion 1, ver ADR-013)
-  perfiles/       Perfiles de monitor (monitor_mock.json)
-  mock/           Generador de imagen mock de monitor + perfil derivado
-  tests/          pytest contra el mock (E2E, rangos, contrato, perfiles)
+                  plantilla.py = andamiaje, no apto para produccion, ver ADR-014)
+  herramientas/   calibrar.py: overlay + tira de contacto para calibrar ROIs
+  perfiles/       Perfiles de monitor: monitor_mock.json y simcore/ (frame real)
+  mock/           Generadores de imagen mock (completo y con PNI combinada)
+  tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
 web/nextapp/    Dashboard Next.js (export estatico). Consume MQTT-WS + WebRTC.
 docs/ito1/      Doc e imagenes Hito 1 (video end-to-end)
 docs/ito2/      Doc, contrato de datos, runbook y diagramas Hito 2
 ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 ```
 
-> `ocr/` cubre hoy la lectura offline de una imagen fija (ver `ocr/README.md`); la
-> captura en vivo por capturadora y la publicación MQTT son las siguientes iteraciones.
-> El resto del stack (servidor, transporte, web) ya está probado end-to-end desde el Hito 2.
+> `ocr/` cubre hoy la lectura offline de una imagen fija (ver `ocr/README.md`), con perfiles
+> del mock y del monitor real de pruebas (SimCore). **El motor OCR incluido es andamiaje y no
+> lee tipografía real** (ADR-014): elegir el motor de producción es el siguiente paso, junto
+> con la captura en vivo por capturadora y la publicación MQTT. El resto del stack (servidor,
+> transporte, web) ya está probado end-to-end desde el Hito 2.
 
 ---
 

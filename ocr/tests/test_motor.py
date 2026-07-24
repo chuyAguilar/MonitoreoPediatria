@@ -21,6 +21,25 @@ def test_lee_numero_con_punto_decimal(motor):
     assert confianza >= 0.9
 
 
+def test_lee_el_separador_de_campo_combinado(motor):
+    """La barra debe reconocerse para poder partir una PNI "SIS/DIA".
+
+    Puntúa algo por debajo de un dígito (su diagonal se rasteriza en escalera),
+    pero muy por encima del umbral de aceptación del lector.
+    """
+    binaria = digitos.dibujar_numero("120/75", 80)
+    texto, confianza = motor.leer(binaria)
+    assert texto == "120/75"
+    assert confianza >= 0.8
+
+
+def test_la_barra_no_se_confunde_con_un_digito(motor):
+    """Un número sin barra no debe producirla (inventaría una presión)."""
+    texto, _ = motor.leer(digitos.dibujar_numero("12075", 80))
+    assert texto == "12075"
+    assert "/" not in texto
+
+
 def test_imagen_vacia_no_reconoce(motor):
     texto, confianza = motor.leer(np.zeros((100, 200), dtype=np.uint8))
     assert texto is None

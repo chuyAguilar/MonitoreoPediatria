@@ -27,6 +27,26 @@ UNIDADES_CONTRATO = {
 }
 
 
+# Holgura (mmHg) al comparar la media con sistólica y diastólica: absorbe el
+# redondeo con que el propio monitor calcula la presión arterial media.
+TOLERANCIA_PNI_MMHG = 2
+
+
+def _pni_coherente(sis, dia, media) -> bool:
+    """Orden fisiológico obligatorio: dia < sis y dia <= media <= sis.
+
+    Cada componente se valida por separado contra su propio rango de
+    plausibilidad, y esos rangos se solapan mucho. Por eso un solo dígito mal
+    leído produce un trío en el que cada número es plausible por su cuenta pero
+    imposible en conjunto (p. ej. 40/75 con media 90, o una presión invertida
+    75/120). Sería tan engañoso como una presión parcial, así que se descarta
+    igual: la regla es "ni parcial ni incoherente".
+    """
+    if dia >= sis:
+        return False
+    return (dia - TOLERANCIA_PNI_MMHG) <= media <= (sis + TOLERANCIA_PNI_MMHG)
+
+
 def construir_mensaje(cama_id: str, device_id: str, ts: str, lecturas: dict) -> dict:
     """Arma el mensaje del contrato 1.1 a partir de las lecturas del OCR.
 
@@ -47,11 +67,12 @@ def construir_mensaje(cama_id: str, device_id: str, ts: str, lecturas: dict) -> 
             "confianza": 0.0 if valor is None else confianza,
         }
 
-    # PNI: o los tres componentes legibles, o nada. Una tensión parcial
-    # (p. ej. sistólica sin diastólica) es clínicamente engañosa, así que
-    # nunca se emite incompleta (CONTEXT.md §1: no presentar lecturas dudosas).
+    # PNI: o los tres componentes legibles y coherentes entre sí, o nada. Una
+    # tensión parcial o imposible es clínicamente engañosa, así que nunca se
+    # emite (CONTEXT.md §1: no presentar lecturas dudosas).
     componentes = [lecturas[c] for c in COMPONENTES_PNI]
-    if any(valor is None for valor, _ in componentes):
+    valores = [valor for valor, _ in componentes]
+    if any(valor is None for valor in valores) or not _pni_coherente(*valores):
         signos["pni"] = None
     else:
         signos["pni"] = {

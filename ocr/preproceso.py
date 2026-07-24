@@ -50,6 +50,24 @@ def binarizar(recorte: np.ndarray) -> np.ndarray:
     return binaria
 
 
+def tinta_en_el_borde(binaria: np.ndarray) -> bool:
+    """True si hay tinta pegada a algún borde de la ROI.
+
+    Señal de que el número **puede estar cortado**: el valor creció (una FC de
+    dos a tres dígitos, una diastólica de 100) y ya no cabe en la caja
+    calibrada. Un número truncado es peligroso porque sigue pareciendo válido:
+    "120/100" recortado da "120/10", que pasa rangos y confianza y publicaría
+    una diastólica de shock en un paciente hipertenso. Ante esta señal, el
+    lector descarta la lectura en vez de arriesgarse (ver DECISIONS.md ADR-015).
+    """
+    if binaria is None or binaria.size == 0:
+        return False
+    return bool(
+        binaria[0, :].any() or binaria[-1, :].any()
+        or binaria[:, 0].any() or binaria[:, -1].any()
+    )
+
+
 def _tamano_normalizado(forma) -> tuple:
     """(alto, ancho) tras llevar el alto a ALTO_NORMALIZADO manteniendo aspecto."""
     alto_orig, ancho_orig = forma[:2]

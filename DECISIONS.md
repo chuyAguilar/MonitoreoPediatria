@@ -21,6 +21,8 @@
 | ADR-011 | Simulador conservado como banco de pruebas | Aceptada |
 | ADR-012 | Adaptador HL7/PDS del monitor real | Reemplazada |
 | ADR-013 | OCR iteración 1: motor de plantilla + perfiles ROI en JSON | Aceptada |
+| ADR-014 | El motor de plantilla no sirve con tipografía real: hace falta OCR de verdad | Aceptada |
+| ADR-015 | Perfiles: signo ausente y campos combinados (PNI `SIS/DIA`) | Aceptada |
 
 ---
 
@@ -273,3 +275,135 @@ plantilla solo demuestra el pipeline, no la robustez ante monitores reales: la d
 motor de producción queda **pendiente de la muestra real** (se registrará en un ADR nuevo).
 (−) El mock y el motor comparten el render de dígitos (`ocr/digitos.py`): los tests validan
 integración, no reconocimiento en condiciones adversas.
+
+**Seguimiento (jul 2026).** La muestra real llegó y confirmó el límite anticipado aquí: ver
+**ADR-014**. El motor de plantilla queda como andamiaje de desarrollo; no es candidato de
+producción.
+
+---
+
+## ADR-014 — El motor de plantilla no sirve con tipografía real: hace falta OCR de verdad
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** ADR-013 dejó anotado que el motor de plantilla 7-segmentos solo se había
+probado contra dígitos que el propio módulo dibujaba (circularidad), y que la decisión del
+motor de producción esperaba a una muestra real. La iteración 2 aportó esa muestra: un frame
+de **SimCore** (simulador de monitor en navegador, 1920×1080), que es el banco de pruebas de
+la capturadora. Sus números están dibujados con una **tipografía sans-serif proporcional**
+(tipo Helvetica), no con un display de 7 segmentos.
+
+**Medición.** ROIs calibradas y verificadas una a una (cada recorte contiene solo su número,
+sin etiquetas ni unidades). Sobre los 17 glifos del frame:
+
+| | Aciertos | Nota |
+|---|---|---|
+| Motor actual (redimensiona el glifo a la caja de la plantilla) | **5/17** | 2 de los 5 son "1" acertados por sesgo, no por reconocimiento |
+| Variante diagnóstica con relación de aspecto preservada | **5/17** | corrige el sesgo pero no mejora el resultado |
+
+Lecturas por signo: `74`→`11`, `98`→`11`, `14`→`11`, `36.8`→`11.1`, `120/75`→`111/11`,
+`MAP 90`→`90` (único correcto, con margen de 0.04 sobre el segundo candidato, es decir azar).
+
+**Dos causas, y la segunda es la que manda.**
+1. *Sesgo del emparejador:* redimensionar cada glifo a la caja de la plantilla destruye la
+   relación de aspecto, y la plantilla del `1` (una barra que al recortarse es un rectángulo
+   sólido) se convierte en un atractor universal. Por eso casi todo se leyó como `1`.
+2. *Incompatibilidad de alfabetos:* el experimento con aspecto preservado **mantiene 5/17**;
+   solo cambia el atractor de `1` a `8`. Los márgenes entre el primer y el segundo candidato
+   caen a 0.01–0.04, es decir, azar. **Arreglar la causa 1 no rescata el enfoque**: el
+   alfabeto de 7 segmentos sencillamente no describe una tipografía sans-serif.
+
+**Decisión.** Dar por cerrada la vía del motor de plantilla para producción. Se mantiene en
+el repo como **andamiaje de desarrollo** (es lo que hace testeable el módulo sin hardware) y
+el test de aceptación del frame real queda como `xfail(strict=True)`: el día que entre un
+motor capaz, el test pasará y `strict` lo convertirá en error, forzando a retirar la marca.
+**No se afinaron umbrales ni el atlas para "aprobar" este frame**, porque ajustar el motor a
+una muestra concreta reproduce exactamente la circularidad que ADR-013 señaló.
+
+La evaluación de **PaddleOCR** (candidato principal, con la GPU de la Jetson) queda como
+iteración propia y ADR aparte.
+
+**Lo que sí funcionó, y que sobrevive al cambio de motor.** El resto del pipeline se comportó
+bien sobre datos reales: la segmentación de glifos fue correcta en los 6 campos; el separador
+`/` se reconoció con el mejor margen de toda la medición (0.824, +0.461 sobre el segundo),
+porque una diagonal es geométricamente distintiva con cualquier tipografía; y la calibración
+de ROIs quedó verificada. Solo falla la identidad del dígito.
+
+**Consecuencia clínica, que es lo importante.** Con lecturas equivocadas en la entrada, el
+módulo **no publicó ni un solo valor erróneo**: todos los signos salieron `null` y la PNI
+entera `null`. Las dos salvaguardas hicieron su trabajo (rango de plausibilidad + umbral de
+confianza). Pero el margen fue mínimo y conviene dejarlo escrito: la FR se leyó como `11`
+(real 14) con confianza **0.599** frente a un umbral de **0.600**. Una milésima separó al
+sistema de publicar una frecuencia respiratoria falsa. Es la mejor evidencia de que la
+defensa en profundidad es necesaria — y de que no basta con ella: hace falta un motor que
+lea bien.
+
+---
+
+## ADR-015 — Perfiles: signo ausente y campos combinados (PNI `SIS/DIA`)
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** El layout real de SimCore rompió dos supuestos del perfil de la iteración 1:
+no muestra **frecuencia de pulso** (el perfil exigía ROI para los 8 signos del contrato), y
+presenta la presión como un **campo combinado** `120/75` con la media aparte (`MAP 90`), en
+vez de tres números independientes.
+
+**Decisión.** Extender el esquema del perfil con campos **opcionales y aditivos**, de modo
+que un perfil de la iteración 1 siga siendo válido sin tocarlo:
+
+- `"presente": false` — el monitor no muestra ese signo. No lleva ROI y el lector lo emite
+  como `null` + confianza 0 **sin intentar OCR**.
+- `"separador"` + `"parte"` — el signo se lee de un campo combinado: dos signos comparten
+  ROI y se quedan con distinta mitad del texto (`parte` 0 o 1). El ROI se lee **una sola
+  vez** (caché), así sistólica y diastólica provienen siempre de la misma lectura.
+
+La partición vive en `lector.py`, no en el motor: cualquier motor real devuelve `"120/75"`
+como texto de forma natural, así que la lógica **sobrevive al cambio de motor** (mismo
+argumento que justifica la interfaz `LectorOCR`). El motor de plantilla añadió el glifo `/`
+solo para poder producir ese texto.
+
+**Consecuencias.** (+) `monitor_mock.json` sigue válido sin cambios y los 34 tests de la
+iteración 1 siguen pasando. (+) La regla PNI todo-o-nada se refuerza gratis: si el motor no
+reconoce el separador, el texto no tiene dos componentes y la presión entera sale `null` —
+leer `"12075"` como una presión sería justo el número inventado que el módulo no debe
+producir. (−) Hoy solo se soportan campos de **dos** componentes; un monitor que muestre
+`sis/dia (media)` en un solo campo necesitaría extender el esquema.
+
+### Salvaguardas añadidas tras la revisión adversarial
+
+Una revisión multi-agente del código de esta iteración encontró varias formas de publicar un
+dato erróneo que las reglas existentes no cubrían. Todas se cerraron y quedaron fijadas con
+tests; el patrón común es que **cada número era plausible por separado y el conjunto
+imposible**, o que una salvaguarda se podía desactivar sin que nada avisara.
+
+1. **PNI incoherente** (`contrato.py`). Los rangos de sis, dia y media se solapan mucho, así
+   que un solo dígito mal leído producía tríos como `40/75` con media 90 (diastólica y media
+   por encima de la sistólica) o una presión invertida `75/120`, emitidos con confianza alta.
+   Ahora se exige orden fisiológico (`dia < sis` y `dia ≤ media ≤ sis`, con 2 mmHg de holgura
+   por el redondeo de la media). La regla pasa a ser **"ni parcial ni incoherente"**.
+2. **Número truncado** (`preproceso.py` + `lector.py`). Una ROI fija calibrada para `120/75`
+   corta el último dígito si el monitor pasa a `120/100`, y `"120/10"` sigue pareciendo una
+   presión válida: publicaría shock en un paciente hipertenso. Ahora, si la tinta toca el
+   borde de su caja, la lectura se descarta. Es la salvaguarda que convierte la limitación de
+   las ROIs fijas en pérdida de dato en vez de dato falso.
+3. **ROIs que se pisan** (`perfiles.py`). Dos signos apuntando al mismo sitio publican el
+   mismo número como si fueran mediciones independientes. Es peor entre FC y FP, porque su
+   concordancia es el control de calidad del oxímetro: una copia "concuerda" siempre. Se
+   detecta **solapamiento**, no igualdad exacta (un píxel de diferencia leía lo mismo y
+   evadía la comprobación).
+4. **Partes invertidas** (`perfiles.py`). Intercambiar `parte` entre `pni_sis` y `pni_dia`
+   daba `75/120` sobre una pantalla que mostraba `120/75`, y pasaba los rangos por solaparse.
+   Ahora el perfil no carga.
+5. **Confianza fuera de dominio** (`lector.py`). El umbral se aplica como `confianza <
+   umbral`, así que un motor con escala 0–100 o que devolviera `NaN` lo habría atravesado
+   entero, **desactivando la salvaguarda principal en silencio**. Se valida el dominio [0,1]
+   y se rechaza lo que no cumpla. Deliberadamente **no se recorta**: convertir un 7.5 en 1.0
+   haría pasar por óptima la peor lectura posible. Importa porque el motor de producción
+   (ADR-014) aún está por enchufar.
+
+**Limitación conocida de las ROIs fijas.** Están calibradas sobre un frame concreto. Con
+texto alineado a la izquierda y la unidad pegada a la derecha (`SpO2 98 %`, `120/75 mmHg`),
+un valor con un dígito más no cabe en la caja. Gracias a la salvaguarda 2 eso produce `null`,
+no un número falso, pero **se pierde el signo**. Es el límite más serio de este perfil y hay
+que revisarlo en la iteración 3 con capturas en vivo, donde el valor cambia solo.

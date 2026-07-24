@@ -26,14 +26,19 @@ _FRACCION_ALTO_PUNTO = 0.45
 # Componentes con menos tinta que esto se descartan como motas de ruido
 _MIN_PIXELES_GLIFO = 12
 
+# Caracteres que el motor puede reconocer: los dígitos más la barra separadora
+# de campos combinados (p. ej. la PNI "120/75"). El punto decimal no va en el
+# atlas: se detecta por su altura, no por su forma.
+CARACTERES_ATLAS = tuple(digitos.SEGMENTOS_POR_DIGITO) + ("/",)
+
 
 class LectorPlantilla(LectorOCR):
     """Lee números 7-segmentos comparando glifos contra un atlas de dígitos."""
 
     def __init__(self):
         self._atlas = {
-            caracter: _recorte_ajustado(digitos.dibujar_digito(caracter, _ALTO_ATLAS))
-            for caracter in digitos.SEGMENTOS_POR_DIGITO
+            caracter: _recorte_ajustado(digitos.dibujar_glifo(caracter, _ALTO_ATLAS))
+            for caracter in CARACTERES_ATLAS
         }
 
     def leer(self, imagen: np.ndarray) -> tuple:
@@ -59,20 +64,44 @@ class LectorPlantilla(LectorOCR):
             return None, 0.0
         return "".join(caracteres), float(min(confianzas))
 
-    def _mejor_digito(self, glifo: np.ndarray) -> tuple:
-        mejor_caracter = None
-        mejor_puntaje = -1.0
+    def diagnosticar(self, imagen: np.ndarray) -> list:
+        """Puntajes de TODOS los candidatos por glifo, de mejor a peor.
+
+        No es parte de la interfaz LectorOCR: es una sonda para medir qué tan
+        separado queda el mejor candidato del segundo (si están pegados, el
+        reconocimiento es una moneda al aire aunque la confianza absoluta
+        parezca aceptable). La usa ocr/herramientas/calibrar.py.
+        """
+        if imagen is None or imagen.size == 0:
+            return []
+        glifos = _separar_glifos(imagen)
+        if not glifos:
+            return []
+        alto_maximo = max(g.shape[0] for g in glifos)
+        diagnostico = []
+        for glifo in glifos:
+            if glifo.shape[0] < alto_maximo * _FRACCION_ALTO_PUNTO:
+                diagnostico.append([(".", 1.0)])
+                continue
+            diagnostico.append(self._ranking(glifo))
+        return diagnostico
+
+    def _ranking(self, glifo: np.ndarray) -> list:
+        """[(caracter, puntaje), ...] ordenado de mejor a peor."""
+        puntajes = []
         for caracter, plantilla in self._atlas.items():
             ajustado = cv2.resize(
                 glifo,
                 (plantilla.shape[1], plantilla.shape[0]),
                 interpolation=cv2.INTER_NEAREST,
             )
-            puntaje = _jaccard(ajustado, plantilla)
-            if puntaje > mejor_puntaje:
-                mejor_puntaje = puntaje
-                mejor_caracter = caracter
-        return mejor_caracter, max(0.0, min(1.0, mejor_puntaje))
+            puntaje = max(0.0, min(1.0, _jaccard(ajustado, plantilla)))
+            puntajes.append((caracter, puntaje))
+        puntajes.sort(key=lambda par: par[1], reverse=True)
+        return puntajes
+
+    def _mejor_digito(self, glifo: np.ndarray) -> tuple:
+        return self._ranking(glifo)[0]
 
 
 def _separar_glifos(binaria: np.ndarray) -> list:
