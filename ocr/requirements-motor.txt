@@ -1,0 +1,18 @@
+# Motor OCR de PRODUCCIÓN (dependencia OPCIONAL).
+#
+# NO hace falta para correr el andamiaje ni la suite de tests: esos usan el
+# motor de plantilla, que no necesita nada más que opencv/numpy. Instala esto
+# solo donde el módulo tenga que leer monitores reales (la Jetson, o dev al
+# validar contra un frame real):
+#
+#     pip install -r ocr/requirements-motor.txt
+#
+# Elegido en ADR-016 tras medir PaddleOCR vs EasyOCR vs Tesseract sobre el
+# frame real de SimCore. Versiones fijadas a las validadas en esa medición.
+#
+# Nota de despliegue offline (ADR-008): PaddleOCR descarga el modelo de
+# reconocimiento la primera vez (~/.paddlex/official_models). En un hospital
+# sin internet hay que pre-descargarlo y empaquetarlo. Camino a Jetson en
+# ocr/README.md.
+paddleocr==3.7.0
+paddlepaddle==3.3.1

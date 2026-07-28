@@ -1,14 +1,13 @@
 """Lectura del frame REAL de SimCore (1920x1080).
 
-Aquí se separa deliberadamente lo que ya funciona de lo que no:
-
-- Lo estructural (perfil válido, `fp` ausente, forma del contrato) y — sobre
-  todo — la **regla de seguridad** de no inventar valores se comprueban de
-  verdad y pasan hoy.
-- La lectura correcta de los dígitos es un `xfail(strict=True)`: el motor de
-  plantilla 7-segmentos no reconoce la tipografía sans-serif de un monitor real
-  (medición en DECISIONS.md ADR-014). El día que entre un motor capaz, este
-  test pasará y `strict` lo convertirá en error, obligando a quitar la marca.
+- Lo estructural (perfil válido, `fp` ausente, forma del contrato) se comprueba
+  con el andamiaje de plantilla, sin depender del motor real.
+- La **regla de seguridad** (nunca publicar un valor equivocado) se comprueba
+  con AMBOS motores: con plantilla todo sale null, con producción sale el valor
+  real; ninguno inventa.
+- El **test de aceptación** (leer los dígitos correctos) usa el motor de
+  producción: pasa con él instalado, se SALTA sin él (ya no es xfail — el motor
+  de producción llegó en la iteración 3, ADR-016).
 """
 
 import json
@@ -36,7 +35,13 @@ def perfil_simcore():
 
 @pytest.fixture(scope="module")
 def mensaje(perfil_simcore, motor):
+    """Lectura con el andamiaje de plantilla (para los tests estructurales)."""
     return leer_imagen(RUTA_FRAME, perfil_simcore, "cama-01", "jetson-01", motor=motor)
+
+
+@pytest.fixture(scope="module")
+def mensaje_produccion(perfil_simcore, motor_produccion):
+    return leer_imagen(RUTA_FRAME, perfil_simcore, "cama-01", "jetson-01", motor=motor_produccion)
 
 
 def test_fixtures_estan_en_el_repo():
@@ -69,15 +74,27 @@ def test_forma_del_contrato(mensaje):
     json.dumps(mensaje)  # debe ser serializable tal cual
 
 
-def test_nunca_publica_un_valor_equivocado(mensaje):
-    """La regla de oro, medida sobre datos reales.
+@pytest.fixture(params=["plantilla", "produccion"])
+def mensaje_de_cualquier_motor(request, perfil_simcore, motor):
+    """Mensaje del frame leído por cada motor disponible (producción se salta sin él)."""
+    if request.param == "plantilla":
+        elegido = motor
+    else:
+        pytest.importorskip("paddleocr", reason="motor de producción no instalado")
+        from ocr.motor.paddle import LectorPaddleOCR
+        elegido = LectorPaddleOCR()
+    return leer_imagen(RUTA_FRAME, perfil_simcore, "cama-01", "jetson-01", motor=elegido)
+
+
+def test_nunca_publica_un_valor_equivocado(mensaje_de_cualquier_motor):
+    """La regla de oro, con CUALQUIER motor.
 
     Cada signo debe ser o bien `null` (no se pudo leer con garantías) o bien el
     valor que de verdad muestra la pantalla. Lo que no puede pasar nunca es un
-    número distinto del real presentado como bueno. Este test es el que debe
-    seguir en verde pase lo que pase con el motor.
+    número distinto del real presentado como bueno — ni con el andamiaje (que
+    lo deja todo en null) ni con el motor de producción (que lee bien).
     """
-    signos = mensaje["signos"]
+    signos = mensaje_de_cualquier_motor["signos"]
     for clave, esperado in VALORES_REALES.items():
         valor = signos[clave]["valor"]
         assert valor is None or valor == esperado, (
@@ -95,15 +112,15 @@ def test_valor_nulo_lleva_confianza_cero(mensaje):
             assert mensaje["signos"][clave]["confianza"] == 0.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="El motor de plantilla 7-seg no lee tipografia sans-serif real "
-           "(5/17 digitos, ADR-014). Se resolvera con el motor de produccion; "
-           "cuando pase, quitar este xfail.",
-)
-def test_aceptacion_lee_el_frame_real(mensaje):
-    signos = mensaje["signos"]
+def test_aceptacion_lee_el_frame_real(mensaje_produccion):
+    """El módulo lee correctamente el frame real con el motor de producción.
+
+    Antes era xfail (el andamiaje no leía tipografía real, ADR-014); desde la
+    iteración 3 lo lee PaddleOCR (ADR-016). Se salta si el motor no está.
+    """
+    signos = mensaje_produccion["signos"]
     for clave, esperado in VALORES_REALES.items():
         assert signos[clave]["valor"] == esperado
     assert signos["pni"] is not None
     assert {k: signos["pni"][k] for k in PNI_REAL} == PNI_REAL
+    assert signos["fp"]["valor"] is None

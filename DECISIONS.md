@@ -23,6 +23,7 @@
 | ADR-013 | OCR iteración 1: motor de plantilla + perfiles ROI en JSON | Aceptada |
 | ADR-014 | El motor de plantilla no sirve con tipografía real: hace falta OCR de verdad | Aceptada |
 | ADR-015 | Perfiles: signo ausente y campos combinados (PNI `SIS/DIA`) | Aceptada |
+| ADR-016 | Motor OCR de producción: PaddleOCR, con entrada cruda al motor | Aceptada |
 
 ---
 
@@ -407,3 +408,87 @@ texto alineado a la izquierda y la unidad pegada a la derecha (`SpO2 98 %`, `120
 un valor con un dígito más no cabe en la caja. Gracias a la salvaguarda 2 eso produce `null`,
 no un número falso, pero **se pierde el signo**. Es el límite más serio de este perfil y hay
 que revisarlo en la iteración 3 con capturas en vivo, donde el valor cambia solo.
+
+---
+
+## ADR-016 — Motor OCR de producción: PaddleOCR, con entrada cruda al motor
+
+**Estado:** Aceptada (jul 2026)
+
+**Contexto.** ADR-014 cerró la vía del motor de plantilla para producción y dejó el test de
+aceptación del frame real en `xfail`. Esta iteración elige e integra el motor de producción,
+medido contra el mismo frame de SimCore, para que el módulo lea de verdad.
+
+**Evaluación** (`ocr/herramientas/evaluar_motores.py`, reproducible). Se midió sobre las ROIs
+del frame de SimCore, alimentando a cada motor el recorte crudo y variantes de
+preprocesamiento. Métrica principal: lectura correcta **y** comportamiento en el fallo (que no
+invente) — este último pesa más que el acierto bruto (`CONTEXT.md` §1).
+
+| Motor | Lectura limpia | Robustez (9 frames transformados) | Comportamiento en el fallo | Coste |
+|---|---|---|---|---|
+| **PaddleOCR** (PP-OCRv6 rec) | **6/6**, confianza ~1.0 en toda variante | **9/9 correctos, 0 valores falsos** | En ROI no numérica lee las **letras** → el filtro numérico las descarta; no alucina dígitos | ~1.6 s/frame CPU; dep. pesada; descarga modelo |
+| EasyOCR (PyTorch) | 6/6, pero confianza depende del preproceso (`temp` 0.536 < umbral en crudo/gris) | 6/9 correctos, **0 valores falsos** (suelta lecturas bajo blur/brillo) | Inventó `188` de "NIBP" con confianza 0.163 (el umbral lo filtra, por poco) | ~0.6 s/frame; dep. media (torch ya presente) |
+| Tesseract | no evaluado | — | — | binario de sistema **no disponible** en el entorno de dev Windows |
+
+**Decisión: PaddleOCR** (`ocr/motor/paddle.py`), usando su modelo de **reconocimiento de
+línea** (`TextRecognition`), no la tubería con detección: las ROIs ya aíslan una línea. No es
+un empate — PaddleOCR gana por lectura y robustez —, así que la regla de desempate
+(offline/Jetson, sesgo a ONNX) no llega a aplicarse. Los tres motores superan de largo al de
+plantilla (5/17). Tesseract quedó como referencia y no se pudo medir (falta el binario del
+sistema en el dev de Windows); no era finalista.
+
+**Por qué PaddleOCR sobre EasyOCR (ambos leen 6/6):**
+- **Robustez:** 9/9 frente a 6/9 sobre frames perturbados (blur, brillo, contraste, ruido,
+  reescala). Ambos con **cero valores falsos** — la métrica que más pesa —, pero PaddleOCR
+  además no pierde lecturas.
+- **Confianza:** uniforme (~1.0) sin depender del preprocesamiento; con EasyOCR, `temp` caía
+  por debajo del umbral en varias variantes (lectura correcta pero descartada).
+- **Fallo más seguro:** ante una ROI con letras, PaddleOCR lee las letras (y el filtro
+  numérico las rechaza por construcción) en vez de forzar una interpretación en dígitos;
+  EasyOCR alucinó un número, salvado solo por el umbral.
+
+**Entrada cruda al motor (cambio de la interfaz).** Hasta ahora el lector entregaba al motor
+una imagen **binarizada** (Otsu + normalización). Un OCR real rinde mucho peor sobre esa
+binaria: se entrena con texto antialias. Desde esta iteración el lector entrega a **todos**
+los motores el **recorte crudo** (color) y cada motor preprocesa a su gusto. La **firma** de
+`LectorOCR.leer(imagen)` no cambia; cambia la *semántica* de `imagen`. El motor de plantilla
+binariza internamente, así que su salida queda **byte-idéntica** (verificado por regresión
+sobre el contrato del mock). Las **salvaguardas siguen en el lector**: la binaria se sigue
+calculando para la guarda de borde y el chequeo de contraste. El adaptador de PaddleOCR
+solo quita espacios del texto y **no recorta caracteres no numéricos**: si el modelo leyera
+`1O2` (una `O` por un cero), dejar la letra hace que el lector lo rechace entero en vez de
+convertirlo en un `12` truncado — la regla de oro manda.
+
+**Dependencia opcional, motor por defecto que falla fuerte.** `paddleocr`/`paddlepaddle` van
+en `ocr/requirements-motor.txt`, **no** en el `requirements.txt` del repo, con import
+perezoso: importar `ocr` o correr el andamiaje nunca los arrastra. `lector.motor_por_defecto()`
+usa PaddleOCR y **falla fuerte** si no está instalado (lanza con un mensaje accionable), en
+vez de caer en silencio al andamiaje: un sistema de monitoreo que no puede leer debe negarse a
+arrancar y decir por qué, no dar falsa sensación de cobertura. El motor de plantilla queda
+disponible **solo** pasándolo explícito con `motor=` (tests y el mock por CLI con
+`--motor plantilla`).
+
+**Camino a la Jetson (documentado, no implementado).** El Orin Nano corre JetPack/L4T (CUDA,
+cuDNN, TensorRT), GPU con 8 GB compartidos.
+- **Ruta recomendada:** exportar el modelo rec a ONNX (`paddle2onnx`) y correrlo con
+  `onnxruntime-gpu` (proveedor TensorRT/CUDA), en vez de instalar `paddlepaddle` en el edge.
+  Es más ligero y estándar en aarch64.
+- **No verificable en el dev de Windows:** `paddle2onnx` falla al cargar su DLL en Windows
+  (problema conocido de esa plataforma; funciona en Linux/aarch64). **La paridad ONNX↔modelo
+  original queda pendiente de validar en el target Linux/Jetson** en la iteración de
+  despliegue. No bloquea la elección del motor, que se decidió por calidad de lectura.
+- **Fallbacks:** `paddlepaddle` directo en Jetson vía wheels aarch64; o EasyOCR (PyTorch para
+  Jetson) si Paddle resultara demasiado frágil en el hardware real. La regla acordada:
+  **la seguridad de lectura pesa más que la elegancia de despliegue**.
+- **Offline (ADR-008/009):** PaddleOCR descarga el modelo la primera vez; hay que
+  pre-descargarlo y empaquetarlo para un hospital sin internet. Para el edge conviene el
+  modelo **mobile** (más ligero) en vez del `medium` por defecto del dev.
+
+**Consecuencias.** (+) El frame real se lee correctamente y el test de aceptación pasa (ya no
+es `xfail`); se salta si el motor no está instalado. (+) Todas las salvaguardas de las
+iteraciones 1–2 siguen intactas: el motor se enchufa *detrás* de ellas. (+) La suite corre
+verde con el motor (113 pasan) y verde con skips sin él (0 fallos). (−) La dependencia de
+producción es pesada y descarga modelos; el despliegue offline y el camino ONNX en Jetson son
+trabajo de la iteración de despliegue. (−) La decisión se tomó sobre **una** muestra (SimCore,
+9 variantes); se reconfirmará con la muestra del **uMEC12 real** cuando llegue de la
+capturadora.

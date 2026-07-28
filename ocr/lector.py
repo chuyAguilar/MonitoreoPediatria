@@ -19,11 +19,34 @@ import numpy as np
 
 from ocr import contrato, preproceso
 from ocr.motor.base import LectorOCR
-from ocr.motor.plantilla import LectorPlantilla
 from ocr.perfiles import Perfil, cargar_perfil
 
 # Confianza mínima del motor para aceptar una lectura
 UMBRAL_CONFIANZA = 0.6
+
+
+def motor_por_defecto() -> LectorOCR:
+    """Devuelve el motor de PRODUCCIÓN, o falla fuerte si no está instalado.
+
+    Falla fuerte a propósito (no cae al andamiaje de plantilla): un sistema de
+    monitoreo que silenciosamente no lee nada es peor que uno que se niega a
+    arrancar y dice por qué. El motor de plantilla NO lee monitores reales
+    (ADR-014); solo sirve para tests y se usa pasándolo explícito con `motor=`.
+    """
+    try:
+        # LectorPaddleOCR importa paddleocr de forma perezosa en su __init__,
+        # así que el ImportError aparece al instanciar, no al importar: la
+        # instanciación va dentro del try a propósito.
+        from ocr.motor.paddle import LectorPaddleOCR
+        return LectorPaddleOCR()
+    except ImportError as e:
+        raise RuntimeError(
+            "Motor de producción (PaddleOCR) no instalado: el módulo OCR no "
+            "puede leer monitores reales. Instala con "
+            "`pip install -r ocr/requirements-motor.txt`, o pasa un motor "
+            "explícito con motor= (el de plantilla es solo andamiaje de test "
+            "y NO lee monitores reales)."
+        ) from e
 
 
 def leer_imagen(
@@ -61,7 +84,7 @@ def leer_imagen(
         )
 
     if motor is None:
-        motor = LectorPlantilla()
+        motor = motor_por_defecto()
     if ts is None:
         ts = _ahora_iso()
 
@@ -77,13 +100,17 @@ def leer_imagen(
             continue
 
         if cfg.roi not in cache_roi:
-            binaria = preproceso.binarizar(preproceso.recortar_roi(imagen, cfg.roi))
+            recorte = preproceso.recortar_roi(imagen, cfg.roi)
+            # La binaria es solo para las guardas del lector (borde/contraste);
+            # al motor se le entrega el recorte CRUDO y él preprocesa a su gusto
+            # (los motores reales rinden mucho peor sobre la binaria). ADR-016.
+            binaria = preproceso.binarizar(recorte)
             if preproceso.tinta_en_el_borde(binaria):
                 # El número toca el borde de su caja: puede estar cortado y no
                 # hay forma de saber qué falta. Se descarta entero.
                 cache_roi[cfg.roi] = (None, 0.0)
             else:
-                cache_roi[cfg.roi] = motor.leer(binaria)
+                cache_roi[cfg.roi] = motor.leer(recorte)
         texto, confianza = cache_roi[cfg.roi]
         confianza = _confianza_valida(confianza)
 
@@ -144,20 +171,29 @@ def _extraer_parte(texto, separador: str, parte: int):
 
 
 def _interpretar(texto, tipo: str):
-    """Convierte el texto del motor al tipo del signo; None si no es un número válido."""
+    """Convierte el texto del motor al tipo del signo; None si no es un número válido.
+
+    Nunca lanza: un texto no convertible (incluidos dígitos Unicode raros como
+    "7²", que pasan `str.isdigit()` pero rompen `int()`) degrada ese signo a
+    None, no tumba el frame entero. La interfaz LectorOCR exige que el fallo sea
+    (None, 0.0), no una excepción (ver ocr/motor/base.py).
+    """
     if not texto:
         return None
-    if tipo == "int":
-        return int(texto) if texto.isdigit() else None
-    # float: dígitos con a lo sumo un punto, ni al inicio ni al final
-    if (
-        texto.count(".") > 1
-        or texto.startswith(".")
-        or texto.endswith(".")
-        or not texto.replace(".", "").isdigit()
-    ):
+    try:
+        if tipo == "int":
+            return int(texto) if texto.isdigit() else None
+        # float: dígitos con a lo sumo un punto, ni al inicio ni al final
+        if (
+            texto.count(".") > 1
+            or texto.startswith(".")
+            or texto.endswith(".")
+            or not texto.replace(".", "").isdigit()
+        ):
+            return None
+        return float(texto)
+    except ValueError:
         return None
-    return float(texto)
 
 
 def _ahora_iso() -> str:

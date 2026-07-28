@@ -107,16 +107,18 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
 - Simulador emitiendo el contrato; camino de datos validado.
 
 **En construcción (paradigma nuevo):**
-- Módulo **`ocr/`**: **iteraciones 1 y 2 hechas** — lectura offline de imagen fija →
+- Módulo **`ocr/`**: **iteraciones 1–3 hechas** — lectura offline de imagen fija →
   contrato `1.1` con `confianza` real por signo; perfiles con signo ausente y campo
-  combinado (PNI `120/75`); perfil calibrado del monitor real de pruebas (SimCore) y
-  herramienta de calibración (ver `ocr/README.md`, ADR-013/014/015).
-- **Bloqueante para producción:** el motor OCR incluido (plantilla 7-seg) es andamiaje y
-  **no lee tipografía de monitor real** (5/17 dígitos, ADR-014). Siguiente paso: evaluar
-  **PaddleOCR** sobre la GPU de la Jetson y registrar el ADR del motor de producción.
-  La red de seguridad sí quedó validada con datos reales: no se publicó ningún valor
-  erróneo, todo salió `null`.
-- Después: capturadora en vivo (V4L2), publicación MQTT y multi-cama en la Jetson.
+  combinado (PNI `120/75`); perfil calibrado del monitor real de pruebas (SimCore).
+- **Motor de producción elegido: PaddleOCR** (ADR-016). Lee el frame real de SimCore
+  correctamente (6/6 signos, 9/9 frames perturbados, 0 valores falsos). El motor de
+  plantilla queda como andamiaje sin dependencias (tests + mock). La dependencia del motor
+  real es **opcional** (`ocr/requirements-motor.txt`); sin ella el módulo **falla fuerte**,
+  no lee en silencio.
+- Después: capturadora en vivo (V4L2), publicación MQTT y multi-cama; **despliegue del motor
+  en la Jetson** (camino ONNX/TensorRT documentado en ADR-016, por validar en el target).
+- La decisión del motor se tomó con la muestra de SimCore; se **reconfirmará con el uMEC12
+  real** cuando llegue de la capturadora.
 - Reproducción del **video externo del monitor** en la Mac como fuente de prueba del OCR.
 
 **Pendiente / futuro (no empezado):**

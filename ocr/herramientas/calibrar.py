@@ -65,9 +65,12 @@ def calibrar(ruta_frame, ruta_perfil, salida_dir=None, motor=None, detalle=False
             continue
 
         if cfg.roi not in cache:
-            binaria = preproceso.binarizar(preproceso.recortar_roi(imagen, cfg.roi))
-            cache[cfg.roi] = (binaria, motor.leer(binaria))
-        binaria, (texto, confianza) = cache[cfg.roi]
+            # Igual que el lector (ADR-016): al motor se le entrega el recorte
+            # CRUDO; la binaria es solo para la tira de contacto y las guardas.
+            recorte = preproceso.recortar_roi(imagen, cfg.roi)
+            binaria = preproceso.binarizar(recorte)
+            cache[cfg.roi] = (recorte, binaria, motor.leer(recorte))
+        recorte, binaria, (texto, confianza) = cache[cfg.roi]
 
         texto_parte = texto
         if cfg.separador is not None:
@@ -76,7 +79,7 @@ def calibrar(ruta_frame, ruta_perfil, salida_dir=None, motor=None, detalle=False
 
         glifos = []
         if detalle and hasattr(motor, "diagnosticar"):
-            glifos = motor.diagnosticar(binaria)
+            glifos = motor.diagnosticar(recorte)
 
         filas.append({
             "signo": nombre, "roi": list(cfg.roi), "texto": texto,

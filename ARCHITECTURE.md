@@ -219,8 +219,9 @@ ocr/            Lectura de signos por OCR (offline sobre imagen fija)
   preproceso.py   Recorte ROI, gris, umbral Otsu, normalizacion
   digitos.py      Render de digitos 7 segmentos y '/' (compartido mock <-> motor)
   motor/          Motores OCR intercambiables (base.py = interfaz LectorOCR;
+                  paddle.py = PRODUCCION (PaddleOCR, dep. opcional, ADR-016);
                   plantilla.py = andamiaje, no apto para produccion, ver ADR-014)
-  herramientas/   calibrar.py: overlay + tira de contacto para calibrar ROIs
+  herramientas/   calibrar.py (ROIs) y evaluar_motores.py (comparativa ADR-016)
   perfiles/       Perfiles de monitor: monitor_mock.json y simcore/ (frame real)
   mock/           Generadores de imagen mock (completo y con PNI combinada)
   tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
@@ -231,10 +232,11 @@ ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 ```
 
 > `ocr/` cubre hoy la lectura offline de una imagen fija (ver `ocr/README.md`), con perfiles
-> del mock y del monitor real de pruebas (SimCore). **El motor OCR incluido es andamiaje y no
-> lee tipografía real** (ADR-014): elegir el motor de producción es el siguiente paso, junto
-> con la captura en vivo por capturadora y la publicación MQTT. El resto del stack (servidor,
-> transporte, web) ya está probado end-to-end desde el Hito 2.
+> del mock y del monitor real de pruebas (SimCore). El **motor de producción es PaddleOCR**
+> (ADR-016), que lee el frame real correctamente; el de plantilla queda como andamiaje sin
+> dependencias. Siguen pendientes la captura en vivo por capturadora, la publicación MQTT y
+> el despliegue del motor en la Jetson. El resto del stack (servidor, transporte, web) ya está
+> probado end-to-end desde el Hito 2.
 
 ---
 

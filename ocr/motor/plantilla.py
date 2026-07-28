@@ -14,7 +14,7 @@ LectorOCR sin tocar el resto del módulo. Ver DECISIONS.md ADR-013.
 import cv2
 import numpy as np
 
-from ocr import digitos
+from ocr import digitos, preproceso
 from ocr.motor.base import LectorOCR
 
 # Alto al que se dibuja el atlas de plantillas
@@ -41,10 +41,24 @@ class LectorPlantilla(LectorOCR):
             for caracter in CARACTERES_ATLAS
         }
 
-    def leer(self, imagen: np.ndarray) -> tuple:
+    @staticmethod
+    def _binarizar(imagen: np.ndarray) -> np.ndarray:
+        """Lleva el recorte a la binaria normalizada con que trabaja el atlas.
+
+        Desde la iteración 3 el lector entrega a TODOS los motores el recorte
+        crudo (color) y cada uno preprocesa a su gusto (ADR-016). El motor de
+        plantilla reconstruye aquí la misma binaria que el lector le pasaba
+        antes, así su salida no cambia respecto a las iteraciones 1–2.
+        """
         if imagen is None or imagen.size == 0:
+            return imagen
+        return preproceso.binarizar(imagen)
+
+    def leer(self, imagen: np.ndarray) -> tuple:
+        binaria = self._binarizar(imagen)
+        if binaria is None or binaria.size == 0:
             return None, 0.0
-        glifos = _separar_glifos(imagen)
+        glifos = _separar_glifos(binaria)
         if not glifos:
             return None, 0.0
 
@@ -72,9 +86,10 @@ class LectorPlantilla(LectorOCR):
         reconocimiento es una moneda al aire aunque la confianza absoluta
         parezca aceptable). La usa ocr/herramientas/calibrar.py.
         """
-        if imagen is None or imagen.size == 0:
+        binaria = self._binarizar(imagen)
+        if binaria is None or binaria.size == 0:
             return []
-        glifos = _separar_glifos(imagen)
+        glifos = _separar_glifos(binaria)
         if not glifos:
             return []
         alto_maximo = max(g.shape[0] for g in glifos)

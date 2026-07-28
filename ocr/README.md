@@ -2,32 +2,48 @@
 
 Lee los signos vitales (FC, SpO2, FP, FR, Temp, PNI) de una **imagen fija** de la
 pantalla de un monitor y produce el JSON del **contrato 1.1** con `origen: "ocr"` y
-`confianza` real por signo. Iteración 1: **offline** — sin capturadora, sin MQTT, sin red.
+`confianza` real por signo. **Offline** — sin capturadora, sin MQTT, sin red.
 
 Contexto y porqués: [`../DECISIONS.md`](../DECISIONS.md) (ADR-002, ADR-003, ADR-013,
-**ADR-014**, **ADR-015**) · contrato: [`../docs/ito2/CONTRATO_DATOS.md`](../docs/ito2/CONTRATO_DATOS.md).
+ADR-014, ADR-015, **ADR-016**) · contrato: [`../docs/ito2/CONTRATO_DATOS.md`](../docs/ito2/CONTRATO_DATOS.md).
 
-> **Estado del motor OCR.** El motor incluido (plantilla de 7 segmentos) es **andamiaje de
-> desarrollo**: lee la imagen mock, pero **no lee la tipografía de un monitor real** (5 de 17
-> dígitos sobre el frame de SimCore). El motor de producción está por decidir — ver ADR-014.
-> Lo que sí está probado sobre datos reales es la red de seguridad: con lecturas erróneas en
-> la entrada, el módulo no publicó ni un valor equivocado; todo salió `null`.
+> **Dos motores, un mismo pipeline (ADR-016).**
+> - **PaddleOCR** = motor de **producción**, lee monitores reales (frame de SimCore: 6/6
+>   signos, 9/9 frames perturbados, 0 valores falsos). Dependencia **opcional**
+>   (`ocr/requirements-motor.txt`).
+> - **Plantilla 7-seg** = **andamiaje** sin dependencias: lee el mock sintético pero **no**
+>   la tipografía real (ADR-014). Solo para tests y para el mock por CLI.
+>
+> Sin el motor de producción instalado, el motor por defecto **falla fuerte** (no lee en
+> silencio). En cualquier caso la red de seguridad manda: ante una lectura dudosa, `null`,
+> nunca un número inventado.
 
 ## Cómo correrlo
 
-Desde la **raíz del repo** (necesita `opencv-python` y `numpy`, ya en `requirements.txt`):
+El andamiaje solo necesita `opencv-python` y `numpy` (ya en `requirements.txt`). El motor de
+producción va aparte:
 
 ```bash
-# 1. Generar la imagen mock del monitor (valores conocidos)
+pip install -r ocr/requirements-motor.txt   # PaddleOCR (opcional; solo para leer real)
+```
+
+Desde la **raíz del repo**:
+
+```bash
+# Mock sintético con el andamiaje (no necesita el motor de producción)
 python -m ocr.mock.generar_mock --salida monitor_mock.png
-
-# 2. Leerla y emitir el contrato 1.1 por consola
 python -m ocr.cli --imagen monitor_mock.png --perfil ocr/perfiles/monitor_mock.json \
-    --cama-id cama-01 --device-id jetson-01
+    --cama-id cama-01 --device-id jetson-01 --motor plantilla
 
-# Sobre el frame real de SimCore (hoy devuelve todo null, ver ADR-014)
+# Frame real de SimCore con el motor de producción (requiere requirements-motor.txt)
 python -m ocr.cli --imagen ocr/perfiles/simcore/frame_simcore.png \
     --perfil ocr/perfiles/simcore/simcore.json --cama-id cama-01 --device-id jetson-01
+```
+
+Para reproducir la comparativa de motores del ADR-016:
+
+```bash
+python -m ocr.herramientas.evaluar_motores
 ```
 
 Como librería (lo que usará el pipeline en vivo):
@@ -75,8 +91,10 @@ perfiles.py     Carga y validación de perfiles de ROI
 preproceso.py   Recorte de ROI, gris, umbral Otsu, normalización
 digitos.py      Render de dígitos 7 segmentos y '/' (compartido mock ↔ motor)
 motor/base.py   Interfaz LectorOCR (motor intercambiable)
+motor/paddle.py     Motor de PRODUCCIÓN (PaddleOCR); dependencia opcional (ADR-016)
 motor/plantilla.py  Motor por plantilla — andamiaje, no apto para producción (ADR-014)
-herramientas/calibrar.py  Calibrador de ROIs (overlay + tira de contacto)
+herramientas/calibrar.py        Calibrador de ROIs (overlay + tira de contacto)
+herramientas/evaluar_motores.py Comparativa reproducible de motores (ADR-016)
 perfiles/       Perfiles de monitor (JSON declarativo)
   monitor_mock.json         mock sintético (iteración 1)
   simcore/                  monitor real: frame de referencia + perfil
@@ -146,26 +164,39 @@ derecha, una ROI fija puede no dar de sí (limitación documentada en ADR-015).
 
 ## Cambiar de motor OCR
 
-El motor es intercambiable (ADR-013). `motor/plantilla.py` es **andamiaje**: ADR-014 midió
-que no lee tipografía real, así que el motor de producción está por decidir (candidato
-principal: PaddleOCR sobre la GPU de la Jetson). Para enchufar otro:
+El motor es intercambiable (ADR-013). Desde la iteración 3 (ADR-016) el lector entrega al
+motor el **recorte crudo** (color) de la ROI; cada motor preprocesa a su gusto. Para enchufar
+otro:
 
 ```python
 from ocr.motor.base import LectorOCR
 
-class LectorPaddle(LectorOCR):
-    def leer(self, imagen):          # imagen: ROI binaria (dígitos blancos / fondo negro)
+class MiMotor(LectorOCR):
+    def leer(self, imagen):          # imagen: recorte BGR crudo de la ROI
         ...
-        return texto, confianza      # ('0'-'9' y '.', 0-1) o (None, 0.0)
+        return texto, confianza      # ('0'-'9', '.', '/'; confianza 0–1) o (None, 0.0)
 
-mensaje = leer_imagen(..., motor=LectorPaddle())
+mensaje = leer_imagen(..., motor=MiMotor())
 ```
 
 El resto del módulo (perfiles, preproceso, validación, contrato, partición de campos
-combinados) no cambia. Cuando el motor nuevo lea el frame real, el test de aceptación
-`test_aceptacion_lee_el_frame_real` pasará y su `xfail(strict=True)` obligará a retirarlo.
+combinados) no cambia, y las salvaguardas viven en el lector, *delante* del motor. Devuelve la
+confianza en [0, 1]; `_confianza_valida` es la última red, no el primer filtro. No recortes
+caracteres no numéricos del texto: si el modelo leyó una letra, deja que el lector lo rechace
+entero (mejor `null` que un número truncado inventado).
+
+## Camino a la Jetson (documentado, no implementado — ADR-016)
+
+- **Recomendado:** exportar el modelo rec de PaddleOCR a **ONNX** (`paddle2onnx`) y correrlo
+  con `onnxruntime-gpu` (TensorRT/CUDA) en el Orin Nano. Más ligero que instalar
+  `paddlepaddle` en el edge. **Pendiente:** la paridad ONNX↔modelo no se pudo verificar en el
+  dev de Windows (`paddle2onnx` falla al cargar su DLL ahí; funciona en Linux/aarch64) — se
+  valida en el target Jetson.
+- **Fallbacks:** `paddlepaddle` directo con wheels aarch64; o EasyOCR (PyTorch para Jetson).
+- **Offline (sin internet):** pre-descargar y empaquetar el modelo; para el edge, el modelo
+  **mobile** en vez del `medium` del dev.
 
 ## Fuera de alcance de esta iteración
 
-Capturadora/V4L2, MQTT, video/RTSP, multi-cama concurrente y optimización Jetson.
+Capturadora/V4L2, MQTT, video/RTSP, multi-cama concurrente y despliegue físico en la Jetson.
 Ver el estado general en [`../CONTEXT.md`](../CONTEXT.md) §5.

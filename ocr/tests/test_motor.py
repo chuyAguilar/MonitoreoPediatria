@@ -1,4 +1,10 @@
-"""Tests del motor de plantilla y del preprocesamiento, sin pasar por el lector."""
+"""Tests del motor de plantilla y del preprocesamiento, sin pasar por el lector.
+
+Desde la iteración 3 (ADR-016) el lector entrega a los motores el recorte CRUDO
+(color) y cada motor preprocesa a su gusto; el de plantilla binariza adentro.
+Estos tests le pasan imágenes dibujadas (grises) o recortes en color: ambos son
+entradas válidas del nuevo contrato, y el motor las binariza internamente.
+"""
 
 import numpy as np
 import pytest
@@ -11,6 +17,21 @@ def test_lee_cada_digito(motor, caracter):
     binaria = digitos.dibujar_numero(caracter, 80)
     texto, confianza = motor.leer(binaria)
     assert texto == caracter
+    assert confianza >= 0.9
+
+
+def test_lee_un_recorte_en_color(motor):
+    """El contrato de la iteración 3: el motor acepta el recorte crudo (BGR).
+
+    Número claro sobre fondo oscuro, como en un monitor; el motor binariza
+    internamente y lo lee igual que si le pasaran la binaria.
+    """
+    binaria = digitos.dibujar_numero("142", 80)
+    color = np.full((binaria.shape[0] + 20, binaria.shape[1] + 20, 3), 12, dtype=np.uint8)
+    region = color[10:10 + binaria.shape[0], 10:10 + binaria.shape[1]]
+    region[binaria > 0] = (80, 255, 80)
+    texto, confianza = motor.leer(color)
+    assert texto == "142"
     assert confianza >= 0.9
 
 

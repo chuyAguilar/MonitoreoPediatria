@@ -75,6 +75,22 @@ def test_no_se_recorta_al_rango(perfil_mock, imagen):
     assert mensaje["signos"]["fc"]["confianza"] == 0.0
 
 
+@pytest.mark.parametrize("basura", ["7²", "3₃", "①", "12O", "7 4"])
+def test_texto_no_convertible_degrada_a_null_sin_tumbar_el_frame(perfil_mock, imagen, basura):
+    """Un texto que el motor devuelva y no sea un número limpio nula ESE signo.
+
+    Incluye dígitos Unicode como "7²", que pasan str.isdigit() pero rompen int():
+    el módulo debe degradar el signo a null, nunca lanzar y perder el frame
+    entero (la interfaz LectorOCR exige que el fallo sea (None, 0.0)).
+    """
+    mensaje = leer_imagen(imagen, perfil_mock, "cama-01", "jetson-01",
+                          motor=MotorConConfianza(0.99, texto=basura))
+    # No lanza, y todos los signos simples salen null (texto no convertible).
+    for clave in SIGNOS_SIMPLES:
+        assert mensaje["signos"][clave]["valor"] is None
+        assert mensaje["signos"][clave]["confianza"] == 0.0
+
+
 def test_ninguna_confianza_emitida_sale_del_contrato(perfil_mock, imagen):
     """El contrato 1.1 documenta confianza en 0–1: debe cumplirse siempre."""
     for confianza in (0.0, 0.5, 1.0, 75.0, float("nan"), None):
