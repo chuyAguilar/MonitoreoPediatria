@@ -11,7 +11,6 @@ confianza baja o fuera del rango de plausibilidad → null + confianza 0.
 Nunca se inventa un número.
 """
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
@@ -20,6 +19,7 @@ import numpy as np
 from ocr import contrato, preproceso
 from ocr.motor.base import LectorOCR
 from ocr.perfiles import Perfil, cargar_perfil
+from ocr.tiempo import ahora_iso
 
 # Confianza mínima del motor para aceptar una lectura
 UMBRAL_CONFIANZA = 0.6
@@ -86,7 +86,7 @@ def leer_imagen(
     if motor is None:
         motor = motor_por_defecto()
     if ts is None:
-        ts = _ahora_iso()
+        ts = ahora_iso()
 
     lecturas = {}
     # Caché por ROI: dos signos pueden compartir el mismo recorte (p. ej. la
@@ -194,13 +194,3 @@ def _interpretar(texto, tipo: str):
         return float(texto)
     except ValueError:
         return None
-
-
-def _ahora_iso() -> str:
-    """Fecha/hora UTC ISO-8601 con sufijo Z (mismo formato que el simulador)."""
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )

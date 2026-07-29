@@ -211,9 +211,13 @@ Correspondencia con el video: el `cama_id` **es** el nombre del stream —
 capture/        Captura camara Femto Bolt (Hito 1 / profundidad a futuro)
 simulador/      Simulador legacy: emite el contrato por MQTT + video webcam.
                 Ahora sirve para probar la web SIN Jetson.
-ocr/            Lectura de signos por OCR (offline sobre imagen fija)
+ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imagen fija)
   lector.py       Orquestador: imagen + perfil de ROIs -> mensaje contrato 1.1
-  cli.py          CLI: python -m ocr.cli --imagen ... --perfil ...
+  cli.py          CLI: lee una imagen y emite el JSON (python -m ocr.cli)
+  publicar.py     Puente OCR -> MQTT en bucle (python -m ocr.publicar)
+  publicador.py   PublicadorOCR: transporta el contrato por MQTT (cliente inyectado)
+  fuente.py       FuenteFrames + FuenteImagenFija (fuente de frames desacoplada -> V4L2)
+  tiempo.py       ahora_iso(): ts del contrato, compartido lector/publicador
   contrato.py     Construccion del JSON 1.1 (unidades fijas, PNI todo-o-nada)
   perfiles.py     Carga/validacion de perfiles (ROI, signo ausente, campo combinado)
   preproceso.py   Recorte ROI, gris, umbral Otsu, normalizacion
@@ -234,9 +238,10 @@ ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 > `ocr/` cubre hoy la lectura offline de una imagen fija (ver `ocr/README.md`), con perfiles
 > del mock y del monitor real de pruebas (SimCore). El **motor de producción es PaddleOCR**
 > (ADR-016), que lee el frame real correctamente; el de plantilla queda como andamiaje sin
-> dependencias. Siguen pendientes la captura en vivo por capturadora, la publicación MQTT y
-> el despliegue del motor en la Jetson. El resto del stack (servidor, transporte, web) ya está
-> probado end-to-end desde el Hito 2.
+> dependencias. El **puente OCR → MQTT** ya publica el contrato al broker (vitales + estado),
+> así que una cama poblada por OCR aparece en el dashboard end-to-end. Siguen pendientes la
+> **captura en vivo** (una nueva `FuenteFrames` para la capturadora) y el despliegue del motor
+> en la Jetson. El resto del stack (servidor, transporte, web) ya está probado desde el Hito 2.
 
 ---
 

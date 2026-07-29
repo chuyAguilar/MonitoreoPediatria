@@ -115,7 +115,12 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
   plantilla queda como andamiaje sin dependencias (tests + mock). La dependencia del motor
   real es **opcional** (`ocr/requirements-motor.txt`); sin ella el módulo **falla fuerte**,
   no lee en silencio.
-- Después: capturadora en vivo (V4L2), publicación MQTT y multi-cama; **despliegue del motor
+- **Puente OCR → MQTT hecho** (iteración 4): `python -m ocr.publicar` lee un frame en bucle,
+  lo pasa por `leer_imagen()` y publica el contrato por MQTT (vitales + estado online/offline,
+  QoS 1 retained), de modo que la cama aparece en el dashboard existente end-to-end. Solo
+  transporta lo que el OCR validó (publica los `null`). La fuente del frame está desacoplada
+  (`ocr/fuente.py`) para que la captura en vivo entre localizada.
+- Después: **capturadora en vivo (V4L2)** como nueva `FuenteFrames`; multi-cama; **despliegue
   en la Jetson** (camino ONNX/TensorRT documentado en ADR-016, por validar en el target).
 - La decisión del motor se tomó con la muestra de SimCore; se **reconfirmará con el uMEC12
   real** cuando llegue de la capturadora.

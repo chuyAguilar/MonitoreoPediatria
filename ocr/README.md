@@ -46,7 +46,7 @@ Para reproducir la comparativa de motores del ADR-016:
 python -m ocr.herramientas.evaluar_motores
 ```
 
-Como librería (lo que usará el pipeline en vivo):
+Como librería (lo que usa el publicador y usará el pipeline en vivo):
 
 ```python
 from ocr.lector import leer_imagen
@@ -60,6 +60,43 @@ Tests:
 ```bash
 python -m pytest ocr/tests -q
 ```
+
+## Publicar por MQTT (puente OCR → dashboard)
+
+`python -m ocr.publicar` lee un frame en bucle, lo pasa por `leer_imagen()` y publica el
+contrato por MQTT al Mosquitto del servidor, de modo que la cama aparezca en el **dashboard
+web existente** — el mismo camino que el `simulador/`. Solo transporta lo que el OCR ya
+validó (los `null` se publican como `null`; la web los muestra como "--").
+
+```bash
+# Producción: PaddleOCR lee el frame de SimCore y lo publica (requiere el motor y Mosquitto)
+python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01
+
+# Solo transporte, sin PaddleOCR: valida MQTT/estado/web (los valores van null)
+python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01 --motor plantilla
+
+# Sin broker, imprime el JSON en consola (prueba rápida)
+python -m ocr.publicar --motor plantilla --solo-consola
+```
+
+Flags: `--broker` (def. `100.110.157.112`, o env `MQTT_BROKER`), `--puerto-broker` (1883),
+`--cama-id` (`cama-01`), `--device-id` (`jetson-01`), `--hz` (1.0), `--imagen`/`--perfil`
+(def. el frame y perfil de SimCore), `--motor {produccion,plantilla}`, `--solo-consola`.
+Publica `monitoreo/vitales/{cama_id}` y `monitoreo/estado/{cama_id}` (QoS 1, retained); al
+arrancar marca la cama `online`, y al salir (Ctrl+C) `offline`.
+
+**Verlo en el dashboard.** En el servidor, `mosquitto_sub -h localhost -t 'monitoreo/#' -v`
+muestra los mensajes; en el navegador, la cama aparece en el grid (el video mostrará "sin
+cámara" — es otro camino). **No corras el simulador sobre la misma `cama_id`**: ambos
+publican al mismo topic retenido y se pisarían; usa una cama dedicada para el OCR.
+
+> Si el proceso se mata en duro (`kill -9`) no se envía `offline`; la web marca la cama
+> desconectada igual por su timeout de datos (`TIMEOUT_DATOS_MS`, 5 s).
+
+**Cómo cambiará a captura en vivo:** el bucle pide frames a una `FuenteFrames`
+(`ocr/fuente.py`). Hoy es `FuenteImagenFija`; la captura en vivo será una
+`FuenteCapturadora` (V4L2) que implemente `frame()`/`cambio()` — un cambio localizado, sin
+tocar el publicador ni el bucle.
 
 ## Reglas de robustez
 
@@ -85,7 +122,11 @@ descriptivos: un valor anormal pero real (bradicardia de 80 lpm) debe mostrarse.
 
 ```
 lector.py       Orquestador: imagen + perfil → mensaje contrato 1.1
-cli.py          Entrada por consola (python -m ocr.cli)
+cli.py          Lee una imagen y emite el JSON (python -m ocr.cli)
+publicar.py     Puente OCR → MQTT en bucle (python -m ocr.publicar)
+publicador.py   PublicadorOCR: transporta el contrato por MQTT (cliente inyectado)
+fuente.py       FuenteFrames + FuenteImagenFija (fuente de frames desacoplada)
+tiempo.py       ahora_iso(): marca de tiempo del contrato (compartida lector/publicador)
 contrato.py     Construcción del JSON 1.1 (unidades fijas, PNI todo-o-nada)
 perfiles.py     Carga y validación de perfiles de ROI
 preproceso.py   Recorte de ROI, gris, umbral Otsu, normalización
