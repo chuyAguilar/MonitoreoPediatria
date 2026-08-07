@@ -1,6 +1,10 @@
-"""Runner del puente OCR → MQTT: lee un frame en bucle y publica el contrato.
+"""Runner del puente OCR → MQTT: lee frames en bucle y publica el contrato.
 
-Uso (motor de producción, requiere PaddleOCR y Mosquitto corriendo):
+Captura EN VIVO desde la capturadora (en la Jetson; requiere PaddleOCR):
+    python -m ocr.publicar --fuente capturadora --dispositivo /dev/video0 \
+        --broker 100.110.157.112 --cama-id cama-09
+
+Imagen fija (default, retrocompatible):
     python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01
 
 Solo transporte, sin PaddleOCR (los valores van null, valida MQTT/estado/web):
@@ -9,7 +13,7 @@ Solo transporte, sin PaddleOCR (los valores van null, valida MQTT/estado/web):
 Sin broker, imprime el JSON en consola (prueba rápida):
     python -m ocr.publicar --motor plantilla --solo-consola
 
-Detener: Ctrl+C (publica la cama como offline antes de salir).
+Detener: Ctrl+C (publica la cama como offline y libera la capturadora).
 """
 
 import argparse
@@ -19,7 +23,7 @@ import sys
 import time
 
 import ocr
-from ocr.fuente import FuenteImagenFija
+from ocr.fuente import FuenteCapturadora, FuenteImagenFija
 from ocr.lector import leer_imagen, motor_por_defecto
 from ocr.perfiles import cargar_perfil
 from ocr.publicador import PublicadorOCR, crear_cliente_mqtt
@@ -97,6 +101,10 @@ def main(argv=None) -> int:
     p.add_argument("--cama-id", default="cama-01")
     p.add_argument("--device-id", default="jetson-01")
     p.add_argument("--hz", type=float, default=1.0, help="frecuencia de publicación (def. 1.0)")
+    p.add_argument("--fuente", choices=("imagen", "capturadora"), default="imagen",
+                   help="imagen = frame fijo (def.); capturadora = captura V4L2 en vivo")
+    p.add_argument("--dispositivo", default="/dev/video0",
+                   help="dispositivo V4L2 para --fuente capturadora (def. /dev/video0)")
     p.add_argument("--imagen", default=FRAME_DEFECTO, help="frame fijo a leer (def. frame de SimCore)")
     p.add_argument("--perfil", default=PERFIL_DEFECTO, help="perfil de ROIs (def. simcore.json)")
     p.add_argument("--motor", choices=("produccion", "plantilla"), default="produccion",
@@ -104,13 +112,22 @@ def main(argv=None) -> int:
     p.add_argument("--solo-consola", action="store_true", help="imprime el JSON en vez de publicar (sin broker)")
     args = p.parse_args(argv)
 
-    # Fallos de arranque (imagen/perfil ilegible, PaddleOCR no instalado incluso
-    # con --solo-consola) salen con un mensaje claro y código 1, no un traceback.
+    # Fallos de arranque (imagen/perfil ilegible, capturadora que no abre o
+    # entrega otra resolución, PaddleOCR no instalado) salen con un mensaje
+    # claro y código 1, no un traceback. Si algo falla DESPUÉS de abrir la
+    # capturadora, el dispositivo se libera antes de salir.
+    fuente = None
     try:
-        fuente = FuenteImagenFija(args.imagen)
+        if args.fuente == "capturadora":
+            fuente = FuenteCapturadora(args.dispositivo)
+        else:
+            fuente = FuenteImagenFija(args.imagen)
         perfil = cargar_perfil(args.perfil)
         motor = _construir_motor(args.motor)
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, OSError) as e:
+        # OSError cubre FileNotFoundError (perfil o imagen inexistentes)
+        if fuente is not None:
+            fuente.cerrar()
         print(f"ERROR: {e}")
         return 1
 
@@ -121,6 +138,7 @@ def main(argv=None) -> int:
         try:
             cliente = crear_cliente_mqtt(args.broker, args.puerto_broker, client_id=f"ocr-{args.cama_id}")
         except (OSError, RuntimeError) as e:
+            fuente.cerrar()
             print(f"ERROR: no se pudo crear/conectar el cliente MQTT {args.broker}:{args.puerto_broker}: {e}")
             print("¿Está Mosquitto corriendo? ¿Está paho-mqtt instalado? Ver docs/ito2/SIMULADOR.md")
             return 1

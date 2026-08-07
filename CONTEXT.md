@@ -115,13 +115,19 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
   plantilla queda como andamiaje sin dependencias (tests + mock). La dependencia del motor
   real es **opcional** (`ocr/requirements-motor.txt`); sin ella el módulo **falla fuerte**,
   no lee en silencio.
-- **Puente OCR → MQTT hecho** (iteración 4): `python -m ocr.publicar` lee un frame en bucle,
-  lo pasa por `leer_imagen()` y publica el contrato por MQTT (vitales + estado online/offline,
+- **Puente OCR → MQTT hecho** (iteración 4): `python -m ocr.publicar` lee frames en bucle,
+  los pasa por `leer_imagen()` y publica el contrato por MQTT (vitales + estado online/offline,
   QoS 1 retained), de modo que la cama aparece en el dashboard existente end-to-end. Solo
-  transporta lo que el OCR validó (publica los `null`). La fuente del frame está desacoplada
-  (`ocr/fuente.py`) para que la captura en vivo entre localizada.
-- Después: **capturadora en vivo (V4L2)** como nueva `FuenteFrames`; multi-cama; **despliegue
-  en la Jetson** (camino ONNX/TensorRT documentado en ADR-016, por validar en el target).
+  transporta lo que el OCR validó (publica los `null`).
+- **Captura en vivo lista** (iteración 5): `FuenteCapturadora` lee la capturadora HDMI→USB
+  de la Jetson por V4L2 (MJPG 1920×1080, descarta frames de arranque; ante fallo de lectura
+  lanza — nunca sirve un frame viejo). `--fuente capturadora --dispositivo /dev/video0`.
+  El perfil de SimCore quedó **calibrado contra el frame real de la capturadora**
+  (`frame_capturadora.png`) y verificado también sobre el screenshot: un solo perfil lee
+  ambos frames de referencia. Runbook de despliegue en `ocr/README.md` (env Python 3.10
+  aislado, sin tocar ROS; instalación de PaddleOCR manual del usuario).
+- Después: multi-cama; **instalación del motor en la Jetson** (manual; si `paddlepaddle` no
+  instala en aarch64, camino ONNX/TensorRT de ADR-016, por validar en el target).
 - La decisión del motor se tomó con la muestra de SimCore; se **reconfirmará con el uMEC12
   real** cuando llegue de la capturadora.
 - Reproducción del **video externo del monitor** en la Mac como fuente de prueba del OCR.

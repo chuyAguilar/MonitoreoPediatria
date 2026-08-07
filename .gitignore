@@ -4,6 +4,10 @@ __pycache__/
 capturas/
 .venv/
 
+# Scratch de sesiones de calibracion manual y del mock generado por el README
+/_*.png
+/monitor_mock.png
+
 # Node / Next.js (web)
 node_modules/
 .next/

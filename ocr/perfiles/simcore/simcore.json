@@ -1,6 +1,6 @@
 {
   "perfil": "simcore-v1",
-  "notas": "SimCore (sim.healthcore.org.uk/monitor/demo) a pantalla completa 1920x1080. ROIs calibradas sobre frame_simcore.png con ocr/herramientas/calibrar.py. Cada caja encuadra SOLO el numero: las etiquetas y unidades (bpm, %, /min, C, mmHg, MAP) quedan fuera a proposito. Los rangos son de plausibilidad fisiologica (ADR-013), no los tipicos del contrato.",
+  "notas": "SimCore (sim.healthcore.org.uk/monitor/demo) a pantalla completa 1920x1080. Calibrado contra el frame REAL de la capturadora (frame_capturadora.png, cadena SimCore->HDMI->capturadora->USB->Jetson) y verificado tambien sobre el screenshot (frame_simcore.png): el mismo perfil lee ambos, y el test de aceptacion lo fija. Cada caja encuadra SOLO el numero: las etiquetas y unidades (bpm, %, /min, C, mmHg, MAP) quedan fuera a proposito. Los rangos son de plausibilidad fisiologica (ADR-013), no los tipicos del contrato.",
   "resolucion": [
     1920,
     1080
@@ -69,14 +69,14 @@
         45.0
       ],
       "decimales": 1,
-      "notas": "Incluye el punto decimal (y=708-724). El simbolo de grados empieza en x=1107, fuera."
+      "notas": "Incluye el punto decimal (y=708-724). El simbolo de grados empieza en x=1107 en el screenshot (fuera de la caja); en el frame de la capturadora su halo alcanza x~1086..1095 (dentro), pero la apertura 3x3 del preprocesado lo elimina y no dispara la guarda de borde. Vigilarlo si cambia el preprocesado."
     },
     "pni_sis": {
       "roi": [
         10,
-        634,
-        305,
-        82
+        630,
+        295,
+        87
       ],
       "tipo": "int",
       "unidad": "mmHg",
@@ -86,14 +86,14 @@
       ],
       "separador": "/",
       "parte": 0,
-      "notas": "Campo combinado 'SIS/DIA' (120/75). Mismo ROI que pni_dia; se lee una vez y se parte. La tinta ocupa x=23..302 de una caja que acaba en 315: solo caben 6 glifos, asi que una diastolica de 3 digitos (120/100) no entra. No produce un dato falso -tocaria el borde y se descarta-, pero se pierde la presion. Es el limite mas serio de este perfil: ver ADR-015."
+      "notas": "Campo combinado 'SIS/DIA' (120/75). Calibrado (ago 2026) contra el frame REAL de la capturadora (frame_capturadora.png) y verificado tambien sobre el screenshot (frame_simcore.png). Caja [10,630,295,87] = x 10..305, filas 630..716. Tinta medida: capturadora x=26..295 (10px de margen), screenshot x=23..301 (4px); 'mmHg' empieza en x=311/320, fuera en ambos. Vertical: digitos y=635..715 en la capturadora (la barra '/' es lo mas bajo, 1px de margen sobre la fila final 716); 'MAP' empieza en y=718. Mismo ROI que pni_dia; se lee una vez y se parte. Limite conocido (ADR-015): una diastolica de 3 digitos crece hacia la derecha; el ancho 295 da holgura extra pero se revisa con captura en vivo."
     },
     "pni_dia": {
       "roi": [
         10,
-        634,
-        305,
-        82
+        630,
+        295,
+        87
       ],
       "tipo": "int",
       "unidad": "mmHg",
@@ -103,14 +103,14 @@
       ],
       "separador": "/",
       "parte": 1,
-      "notas": "Segunda mitad del campo combinado. La caja termina en y=716, antes de 'MAP' (y=721)."
+      "notas": "Segunda mitad del campo combinado (mismo ROI que pni_sis). Filas 630..716; pni_media empieza en y=717 sin solape."
     },
     "pni_media": {
       "roi": [
         85,
-        716,
+        717,
         55,
-        32
+        31
       ],
       "tipo": "int",
       "unidad": "mmHg",

@@ -20,10 +20,11 @@ ADR-014, ADR-015, **ADR-016**) · contrato: [`../docs/ito2/CONTRATO_DATOS.md`](.
 
 ## Cómo correrlo
 
-El andamiaje solo necesita `opencv-python` y `numpy` (ya en `requirements.txt`). El motor de
-producción va aparte:
+El runtime mínimo de `ocr/` está en [`requirements.txt`](requirements.txt) (opencv, numpy,
+paho-mqtt — sin las dependencias de otros módulos del repo). El motor de producción va aparte:
 
 ```bash
+pip install -r ocr/requirements.txt         # runtime del módulo (autocontenido)
 pip install -r ocr/requirements-motor.txt   # PaddleOCR (opcional; solo para leer real)
 ```
 
@@ -93,10 +94,59 @@ publican al mismo topic retenido y se pisarían; usa una cama dedicada para el O
 > Si el proceso se mata en duro (`kill -9`) no se envía `offline`; la web marca la cama
 > desconectada igual por su timeout de datos (`TIMEOUT_DATOS_MS`, 5 s).
 
-**Cómo cambiará a captura en vivo:** el bucle pide frames a una `FuenteFrames`
-(`ocr/fuente.py`). Hoy es `FuenteImagenFija`; la captura en vivo será una
-`FuenteCapturadora` (V4L2) que implemente `frame()`/`cambio()` — un cambio localizado, sin
-tocar el publicador ni el bucle.
+## Captura en vivo (capturadora HDMI→USB)
+
+El bucle pide frames a una `FuenteFrames` (`ocr/fuente.py`). Con `--fuente capturadora`,
+la `FuenteCapturadora` lee el dispositivo V4L2 en vivo (MJPG 1920×1080), descarta los
+~15 frames negros de arranque y valida que la resolución coincida con la del perfil:
+
+```bash
+python -m ocr.publicar --fuente capturadora --dispositivo /dev/video0 \
+    --broker 100.110.157.112 --cama-id cama-09
+```
+
+Política de seguridad ante fallo de lectura: reintenta unas pocas veces y luego **lanza**
+(el `finally` publica `offline` y el proceso termina con error). **Nunca sirve un frame
+viejo**: republicar un frame congelado con `ts` fresco sería presentar datos viejos como
+actuales — el mismo pecado que inventar un número. La web muestra la cama desconectada,
+que es la verdad.
+
+Esa regla cubre también el buffering del driver: la cola V4L2 se fija a **1 frame**
+(`CAP_PROP_BUFFERSIZE`) y cada lectura se drena con `grab()` antes del `read()` servido —
+sin eso, OpenCV entrega el frame **más viejo** de una cola de 4 (a 1 Hz, ~4 s de retraso
+publicados como actuales, y una desconexión tardaría ~4 ticks en notarse).
+
+El perfil `simcore.json` está **calibrado contra el frame real de la capturadora**
+(`frame_capturadora.png`) y verificado también sobre el screenshot (`frame_simcore.png`):
+el mismo perfil lee ambos (test de aceptación parametrizado; FC 73 en la capturadora, 74
+en el screenshot — son capturas de momentos distintos).
+
+### Runbook: desplegar en la Jetson
+
+1. **Clonar el repo** en la Jetson (`jetson@…`, JetPack 6 / L4T r36, aarch64).
+2. **Entorno aislado con Python 3.10** — el `base` de conda es 3.13 (demasiado nuevo para
+   PaddleOCR) y **no tocar el entorno de ROS** que vive en esa Jetson:
+   ```bash
+   conda create -n ocr-monitoreo python=3.10 -y
+   conda activate ocr-monitoreo
+   pip install -r ocr/requirements.txt
+   pip install -r ocr/requirements-motor.txt
+   ```
+   Si `paddlepaddle` no instala directo en aarch64/JetPack, la vía alternativa es exportar
+   el modelo a ONNX y correr con `onnxruntime` (ADR-016) — repórtalo para esa iteración.
+3. **Pre-descarga del modelo** (una vez, con internet): correr cualquier lectura hace que
+   PaddleOCR baje su modelo a `~/.paddlex/official_models`. Con
+   `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` evita el chequeo de red en arranques
+   posteriores. Para operar sin internet, esa carpeta debe existir ya poblada.
+4. **La fuente de video debe estar activa**: la Mac en **modo espejo** (o SimCore en el
+   monitor externo) — si no, la capturadora entrega negro y todos los signos salen `null`
+   (comportamiento correcto: no hay nada que leer).
+5. **Correr y verificar**: el comando de arriba; en el servidor
+   `mosquitto_sub -h localhost -t 'monitoreo/#' -v` y la cama en el dashboard, cambiando
+   en vivo con SimCore.
+6. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
+   toca el borde y sale `null` (nunca un dato falso truncado). Con captura en vivo esto
+   puede verse como `null` intermitente en valores extremos.
 
 ## Reglas de robustez
 
@@ -125,7 +175,7 @@ lector.py       Orquestador: imagen + perfil → mensaje contrato 1.1
 cli.py          Lee una imagen y emite el JSON (python -m ocr.cli)
 publicar.py     Puente OCR → MQTT en bucle (python -m ocr.publicar)
 publicador.py   PublicadorOCR: transporta el contrato por MQTT (cliente inyectado)
-fuente.py       FuenteFrames + FuenteImagenFija (fuente de frames desacoplada)
+fuente.py       FuenteFrames + FuenteImagenFija + FuenteCapturadora (V4L2 en vivo)
 tiempo.py       ahora_iso(): marca de tiempo del contrato (compartida lector/publicador)
 contrato.py     Construcción del JSON 1.1 (unidades fijas, PNI todo-o-nada)
 perfiles.py     Carga y validación de perfiles de ROI
@@ -138,7 +188,7 @@ herramientas/calibrar.py        Calibrador de ROIs (overlay + tira de contacto)
 herramientas/evaluar_motores.py Comparativa reproducible de motores (ADR-016)
 perfiles/       Perfiles de monitor (JSON declarativo)
   monitor_mock.json         mock sintético (iteración 1)
-  simcore/                  monitor real: frame de referencia + perfil
+  simcore/                  perfil + 2 frames de referencia (screenshot y capturadora)
 mock/           Generadores de imagen mock (completo y con PNI combinada)
 tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
 ```

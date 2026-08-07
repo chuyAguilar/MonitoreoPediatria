@@ -216,7 +216,7 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   cli.py          CLI: lee una imagen y emite el JSON (python -m ocr.cli)
   publicar.py     Puente OCR -> MQTT en bucle (python -m ocr.publicar)
   publicador.py   PublicadorOCR: transporta el contrato por MQTT (cliente inyectado)
-  fuente.py       FuenteFrames + FuenteImagenFija (fuente de frames desacoplada -> V4L2)
+  fuente.py       FuenteFrames + FuenteImagenFija + FuenteCapturadora (V4L2 en vivo)
   tiempo.py       ahora_iso(): ts del contrato, compartido lector/publicador
   contrato.py     Construccion del JSON 1.1 (unidades fijas, PNI todo-o-nada)
   perfiles.py     Carga/validacion de perfiles (ROI, signo ausente, campo combinado)
@@ -235,13 +235,13 @@ docs/ito2/      Doc, contrato de datos, runbook y diagramas Hito 2
 ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 ```
 
-> `ocr/` cubre hoy la lectura offline de una imagen fija (ver `ocr/README.md`), con perfiles
-> del mock y del monitor real de pruebas (SimCore). El **motor de producción es PaddleOCR**
-> (ADR-016), que lee el frame real correctamente; el de plantilla queda como andamiaje sin
-> dependencias. El **puente OCR → MQTT** ya publica el contrato al broker (vitales + estado),
-> así que una cama poblada por OCR aparece en el dashboard end-to-end. Siguen pendientes la
-> **captura en vivo** (una nueva `FuenteFrames` para la capturadora) y el despliegue del motor
-> en la Jetson. El resto del stack (servidor, transporte, web) ya está probado desde el Hito 2.
+> `ocr/` cubre la cadena completa del edge: **captura en vivo** de la capturadora HDMI→USB
+> por V4L2 (`FuenteCapturadora`) → lectura OCR (**PaddleOCR**, ADR-016; el de plantilla es
+> andamiaje sin dependencias) → **publicación MQTT** del contrato (vitales + estado), con lo
+> que la cama aparece en el dashboard end-to-end. El perfil de SimCore está calibrado contra
+> el frame real de la capturadora. Pendiente: instalar el motor en la Jetson (runbook en
+> `ocr/README.md`; en aarch64 puede requerir la vía ONNX de ADR-016) y multi-cama. El resto
+> del stack (servidor, transporte, web) ya está probado desde el Hito 2.
 
 ---
 

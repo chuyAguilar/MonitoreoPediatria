@@ -1,0 +1,13 @@
+# Runtime mínimo del módulo ocr/ — para desplegarlo SOLO (p. ej. en la Jetson).
+#
+# El requirements.txt de la RAÍZ arrastra dependencias de otros módulos
+# (pyorbbecsdk2, scipy, matplotlib) que en aarch64 estorban o ni instalan;
+# ocr/ es autocontenido y con esto le basta para capturar y publicar:
+#
+#     pip install -r ocr/requirements.txt          # andamiaje + captura + MQTT
+#     pip install -r ocr/requirements-motor.txt    # motor de producción (PaddleOCR)
+#
+# Para correr los tests añade: pip install pytest
+opencv-python
+numpy
+paho-mqtt
