@@ -28,21 +28,23 @@ UMBRAL_CONFIANZA = 0.6
 def motor_por_defecto() -> LectorOCR:
     """Devuelve el motor de PRODUCCIÓN, o falla fuerte si no está instalado.
 
-    Falla fuerte a propósito (no cae al andamiaje de plantilla): un sistema de
-    monitoreo que silenciosamente no lee nada es peor que uno que se niega a
-    arrancar y dice por qué. El motor de plantilla NO lee monitores reales
-    (ADR-014); solo sirve para tests y se usa pasándolo explícito con `motor=`.
+    Producción = RapidOCR sobre ONNX Runtime (ADR-017; Paddle Inference
+    segfaultea en la Jetson aarch64). Falla fuerte a propósito (no cae al
+    andamiaje de plantilla): un sistema de monitoreo que silenciosamente no
+    lee nada es peor que uno que se niega a arrancar y dice por qué. El motor
+    de plantilla NO lee monitores reales (ADR-014); solo sirve para tests y
+    se usa pasándolo explícito con `motor=`.
     """
     try:
-        # LectorPaddleOCR importa paddleocr de forma perezosa en su __init__,
-        # así que el ImportError aparece al instanciar, no al importar: la
-        # instanciación va dentro del try a propósito.
-        from ocr.motor.paddle import LectorPaddleOCR
-        return LectorPaddleOCR()
+        # LectorRapidOCR importa rapidocr_onnxruntime de forma perezosa en su
+        # __init__, así que el ImportError aparece al instanciar, no al
+        # importar: la instanciación va dentro del try a propósito.
+        from ocr.motor.rapid import LectorRapidOCR
+        return LectorRapidOCR()
     except ImportError as e:
         raise RuntimeError(
-            "Motor de producción (PaddleOCR) no instalado: el módulo OCR no "
-            "puede leer monitores reales. Instala con "
+            "Motor de producción (RapidOCR/onnxruntime) no instalado: el "
+            "módulo OCR no puede leer monitores reales. Instala con "
             "`pip install -r ocr/requirements-motor.txt`, o pasa un motor "
             "explícito con motor= (el de plantilla es solo andamiaje de test "
             "y NO lee monitores reales)."

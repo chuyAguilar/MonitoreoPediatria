@@ -37,7 +37,7 @@ def main(argv=None) -> int:
     parser.add_argument("--salida", help="Además de imprimir, escribe el JSON a este archivo")
     parser.add_argument(
         "--motor", choices=("produccion", "plantilla"), default="produccion",
-        help="produccion = PaddleOCR (defecto); plantilla = andamiaje para el mock",
+        help="produccion = RapidOCR/onnxruntime (defecto); plantilla = andamiaje para el mock",
     )
     args = parser.parse_args(argv)
 

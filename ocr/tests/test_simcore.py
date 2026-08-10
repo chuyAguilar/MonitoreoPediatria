@@ -11,7 +11,7 @@ Hay DOS frames de referencia y un solo perfil que debe leer ambos:
 
 Lo estructural (perfil válido, `fp` ausente, forma del contrato) se comprueba
 con el andamiaje de plantilla; la lectura correcta de los dígitos usa el motor
-de producción (se salta si PaddleOCR no está instalado). La regla de oro
+de producción (RapidOCR, ADR-017; se salta si no está instalado). La regla de oro
 —nunca publicar un valor equivocado— se comprueba con ambos motores y ambos
 frames.
 """
@@ -96,9 +96,9 @@ def test_forma_del_contrato(mensaje):
 def motor_para_regla_de_oro(request, motor):
     if request.param == "plantilla":
         return motor
-    pytest.importorskip("paddleocr", reason="motor de producción no instalado")
-    from ocr.motor.paddle import LectorPaddleOCR
-    return LectorPaddleOCR()
+    pytest.importorskip("rapidocr_onnxruntime", reason="motor de producción no instalado")
+    from ocr.motor.rapid import LectorRapidOCR
+    return LectorRapidOCR()
 
 
 @pytest.mark.parametrize("nombre_frame", list(FRAMES))
@@ -134,8 +134,8 @@ def test_aceptacion_lee_el_frame_real(perfil_simcore, motor_produccion, nombre_f
 
     El perfil está calibrado contra la capturadora (producción) y verificado
     sobre el screenshot: que un solo perfil lea los dos es el invariante que
-    protege contra el pequeño desplazamiento entre fuentes. Se salta sin
-    PaddleOCR.
+    protege contra el pequeño desplazamiento entre fuentes. Se salta sin el
+    motor de producción.
     """
     ruta, esperados = FRAMES[nombre_frame]
     signos = leer_imagen(ruta, perfil_simcore, "cama-01", "jetson-01",

@@ -7,13 +7,14 @@ Es el experimento que respalda ADR-016. Mide, por motor disponible:
   (blur, brillo, contraste, ruido, reescala) y cuántos valores FALSOS emite,
 - comportamiento en el fallo: casos donde lo correcto es NO leer.
 
-Motores que no estén instalados se saltan (no es un error). El motor de
-producción se prueba a través de su módulo real (ocr.motor.paddle); EasyOCR y
+Motores que no estén instalados se saltan (no es un error). Los motores
+integrados se prueban a través de sus módulos reales (ocr.motor.rapid = el de
+producción, ADR-017; ocr.motor.paddle = alternativo/histórico); EasyOCR y
 Tesseract llevan un adaptador local aquí porque no están integrados.
 
 Uso:
-    pip install -r ocr/requirements-motor.txt   # PaddleOCR (el ganador)
-    pip install easyocr pytesseract              # para comparar
+    pip install -r ocr/requirements-motor.txt    # RapidOCR (producción)
+    pip install paddleocr easyocr pytesseract    # para comparar
     python -m ocr.herramientas.evaluar_motores
 """
 
@@ -79,9 +80,16 @@ class AdaptadorTesseract(LectorOCR):
 def motores_disponibles():
     motores = []
     try:
+        from ocr.motor.rapid import LectorRapidOCR
+        m = LectorRapidOCR()
+        m.nombre = "rapidocr"  # motor de PRODUCCIÓN (ADR-017)
+        motores.append(m)
+    except Exception as e:
+        print(f"[no disponible] rapidocr: {type(e).__name__}")
+    try:
         from ocr.motor.paddle import LectorPaddleOCR
         m = LectorPaddleOCR()
-        m.nombre = "paddleocr"
+        m.nombre = "paddleocr"  # alternativo/histórico (ADR-016; segfaultea en aarch64)
         motores.append(m)
     except Exception as e:
         print(f"[no disponible] paddleocr: {type(e).__name__}")

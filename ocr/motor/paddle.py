@@ -1,9 +1,12 @@
-"""Motor OCR de producción: PaddleOCR (reconocimiento de línea).
+"""Motor OCR ALTERNATIVO: PaddleOCR (reconocimiento de línea).
 
-Elegido en la iteración 3 tras medir PaddleOCR, EasyOCR y Tesseract sobre el
-frame real de SimCore (ADR-016): lee los 6 campos con confianza ~1.0, es el más
-robusto ante perturbaciones (9/9 frames transformados frente a 6/9 de EasyOCR)
-y no alucina dígitos de texto no numérico.
+Fue el motor de producción elegido en la iteración 3 (ADR-016: ganó a EasyOCR
+y Tesseract en lectura y robustez sobre el frame real). **Dejó de serlo en
+ADR-017**: su motor de inferencia segfaultea de forma reproducible en la
+Jetson Orin (aarch64), el target de producción. Se conserva como adaptador
+alternativo — sigue funcionando en x86_64 — pero su dependencia ya no se
+declara en requirements-motor.txt; quien lo quiera la instala a mano y lo pasa
+por API con `motor=LectorPaddleOCR()`. Producción = ocr/motor/rapid.py.
 
 Usa el modelo de **reconocimiento** de PaddleOCR (`TextRecognition`), no la
 tubería completa: las ROIs del perfil ya aíslan una línea de texto, así que la

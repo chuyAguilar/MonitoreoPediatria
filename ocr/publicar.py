@@ -1,13 +1,13 @@
 """Runner del puente OCR → MQTT: lee frames en bucle y publica el contrato.
 
-Captura EN VIVO desde la capturadora (en la Jetson; requiere PaddleOCR):
+Captura EN VIVO desde la capturadora (en la Jetson; requiere el motor real):
     python -m ocr.publicar --fuente capturadora --dispositivo /dev/video0 \
         --broker 100.110.157.112 --cama-id cama-09
 
 Imagen fija (default, retrocompatible):
     python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01
 
-Solo transporte, sin PaddleOCR (los valores van null, valida MQTT/estado/web):
+Solo transporte, sin el motor real (los valores van null, valida MQTT/estado/web):
     python -m ocr.publicar --motor plantilla --cama-id cama-01
 
 Sin broker, imprime el JSON en consola (prueba rápida):
@@ -81,7 +81,7 @@ def _construir_motor(nombre):
     if nombre == "plantilla":
         from ocr.motor.plantilla import LectorPlantilla
         return LectorPlantilla()
-    return motor_por_defecto()  # producción; falla fuerte si PaddleOCR no está
+    return motor_por_defecto()  # producción (RapidOCR); falla fuerte si no está
 
 
 class _ClienteConsola:
@@ -108,12 +108,12 @@ def main(argv=None) -> int:
     p.add_argument("--imagen", default=FRAME_DEFECTO, help="frame fijo a leer (def. frame de SimCore)")
     p.add_argument("--perfil", default=PERFIL_DEFECTO, help="perfil de ROIs (def. simcore.json)")
     p.add_argument("--motor", choices=("produccion", "plantilla"), default="produccion",
-                   help="produccion = PaddleOCR (def.); plantilla = solo transporte (valores null)")
+                   help="produccion = RapidOCR/onnxruntime (def.); plantilla = solo transporte (valores null)")
     p.add_argument("--solo-consola", action="store_true", help="imprime el JSON en vez de publicar (sin broker)")
     args = p.parse_args(argv)
 
     # Fallos de arranque (imagen/perfil ilegible, capturadora que no abre o
-    # entrega otra resolución, PaddleOCR no instalado) salen con un mensaje
+    # entrega otra resolución, motor real no instalado) salen con un mensaje
     # claro y código 1, no un traceback. Si algo falla DESPUÉS de abrir la
     # capturadora, el dispositivo se libera antes de salir.
     fuente = None

@@ -107,14 +107,17 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
 - Simulador emitiendo el contrato; camino de datos validado.
 
 **En construcción (paradigma nuevo):**
-- Módulo **`ocr/`**: **iteraciones 1–3 hechas** — lectura offline de imagen fija →
+- Módulo **`ocr/`**: **iteraciones 1–6 hechas** — lectura offline de imagen fija →
   contrato `1.1` con `confianza` real por signo; perfiles con signo ausente y campo
   combinado (PNI `120/75`); perfil calibrado del monitor real de pruebas (SimCore).
-- **Motor de producción elegido: PaddleOCR** (ADR-016). Lee el frame real de SimCore
-  correctamente (6/6 signos, 9/9 frames perturbados, 0 valores falsos). El motor de
-  plantilla queda como andamiaje sin dependencias (tests + mock). La dependencia del motor
-  real es **opcional** (`ocr/requirements-motor.txt`); sin ella el módulo **falla fuerte**,
-  no lee en silencio.
+- **Motor de producción: RapidOCR/ONNX Runtime** (ADR-017; sustituye a PaddleOCR de ADR-016,
+  cuyo motor de inferencia segfaultea en la Jetson aarch64). Mismos modelos PP-OCR, backend
+  `onnxruntime` estable en la Orin; paridad de lectura medida con Paddle (6/6, 9/9, 0 falsos)
+  y ~21× más rápido en CPU (88 ms/frame); modelos empaquetados en el wheel → **offline de
+  fábrica**. El motor de plantilla queda como andamiaje sin dependencias (tests + mock);
+  Paddle queda como adaptador alternativo x86_64 sin declarar. La dependencia del motor real
+  es **opcional** (`ocr/requirements-motor.txt`); sin ella el módulo **falla fuerte**, no lee
+  en silencio.
 - **Puente OCR → MQTT hecho** (iteración 4): `python -m ocr.publicar` lee frames en bucle,
   los pasa por `leer_imagen()` y publica el contrato por MQTT (vitales + estado online/offline,
   QoS 1 retained), de modo que la cama aparece en el dashboard existente end-to-end. Solo
@@ -125,9 +128,10 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
   El perfil de SimCore quedó **calibrado contra el frame real de la capturadora**
   (`frame_capturadora.png`) y verificado también sobre el screenshot: un solo perfil lee
   ambos frames de referencia. Runbook de despliegue en `ocr/README.md` (env Python 3.10
-  aislado, sin tocar ROS; instalación de PaddleOCR manual del usuario).
-- Después: multi-cama; **instalación del motor en la Jetson** (manual; si `paddlepaddle` no
-  instala en aarch64, camino ONNX/TensorRT de ADR-016, por validar en el target).
+  aislado, sin tocar ROS).
+- Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton: SimCore →
+  capturadora → Jetson con RapidOCR → dashboard); multi-cama; reconfirmar contra el
+  **uMEC12 real** cuando llegue; seguimiento de ms/frame de RapidOCR en la Orin.
 - La decisión del motor se tomó con la muestra de SimCore; se **reconfirmará con el uMEC12
   real** cuando llegue de la capturadora.
 - Reproducción del **video externo del monitor** en la Mac como fuente de prueba del OCR.

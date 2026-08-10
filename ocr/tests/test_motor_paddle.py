@@ -1,8 +1,9 @@
-"""Motor de producción (PaddleOCR) y la selección por defecto.
+"""Motor ALTERNATIVO PaddleOCR (histórico, ADR-016 → sustituido por ADR-017).
 
-Los tests que necesitan el motor real se SALTAN si la dependencia no está
-instalada (importorskip); nunca fallan por eso. La lógica de motor_por_defecto
-—que falla fuerte sin el motor— sí se prueba siempre, simulando la ausencia.
+Paddle ya no es el motor de producción (su motor de inferencia segfaultea en
+la Jetson aarch64), pero el adaptador se conserva y sigue funcionando en
+x86_64. Estos tests se SALTAN si paddleocr no está instalado (su dependencia
+ya no se declara en requirements-motor.txt).
 """
 
 import cv2
@@ -10,9 +11,8 @@ import numpy as np
 import pytest
 
 from ocr import digitos
-from ocr.lector import motor_por_defecto
 
-paddleocr = pytest.importorskip("paddleocr", reason="motor de producción no instalado")
+paddleocr = pytest.importorskip("paddleocr", reason="motor alternativo Paddle no instalado")
 
 from ocr.motor.paddle import LectorPaddleOCR
 
@@ -63,7 +63,3 @@ def test_no_alucina_digitos_de_texto_no_numerico(paddle):
                 (240, 240, 240), 3, cv2.LINE_AA)
     leido, _ = paddle.leer(etiqueta)
     assert leido is None or not leido.replace(".", "").replace("/", "").isdigit()
-
-
-def test_motor_por_defecto_devuelve_produccion():
-    assert isinstance(motor_por_defecto(), LectorPaddleOCR)

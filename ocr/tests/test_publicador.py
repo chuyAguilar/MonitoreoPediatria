@@ -1,7 +1,8 @@
-"""Publicador MQTT con un cliente FALSO: sin broker, sin red, sin PaddleOCR.
+"""Publicador MQTT con un cliente FALSO: sin broker, sin red, sin motor real.
 
 Verifica los topics, el payload del contrato, QoS/retain y el ciclo
-online/offline. Usa el motor de plantilla, así que no necesita PaddleOCR.
+online/offline. Usa el motor de plantilla, así que no necesita el motor de
+producción (RapidOCR).
 """
 
 import json
@@ -79,7 +80,7 @@ def test_cerrar_publica_offline_y_desconecta(publicador, cliente):
     assert estados == ["offline"]
 
 
-# --- Ciclo de vida completo con el bucle, sin broker ni PaddleOCR ---------
+# --- Ciclo de vida completo con el bucle, sin broker ni motor real --------
 
 
 @pytest.fixture()
@@ -164,25 +165,25 @@ def test_solo_se_ocr_a_una_vez_con_imagen_fija(cliente, perfil_simcore):
     assert len(cliente.de_topic("monitoreo/vitales/cama-01")) == 4
 
 
-def test_cli_falla_limpio_sin_paddle_en_solo_consola(monkeypatch):
-    """--solo-consola sin PaddleOCR sale con código 1 y mensaje, no un traceback."""
+def test_cli_falla_limpio_sin_motor_real_en_solo_consola(monkeypatch):
+    """--solo-consola sin el motor de producción sale con código 1, no un traceback."""
     import sys
 
     from ocr import publicar
 
-    monkeypatch.setitem(sys.modules, "paddleocr", None)  # simula PaddleOCR ausente
-    monkeypatch.delitem(sys.modules, "ocr.motor.paddle", raising=False)
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)  # simula ausencia
+    monkeypatch.delitem(sys.modules, "ocr.motor.rapid", raising=False)
     # motor por defecto = produccion; --solo-consola no debería exigir el motor real
     assert publicar.main(["--solo-consola"]) == 1
 
 
 def test_cli_solo_consola_con_plantilla_es_valido(monkeypatch, capsys):
-    """Con --motor plantilla, --solo-consola no necesita PaddleOCR (sale 0)."""
+    """Con --motor plantilla, --solo-consola no necesita el motor real (sale 0)."""
     import sys
 
     from ocr import publicar
 
-    monkeypatch.setitem(sys.modules, "paddleocr", None)
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
     # el bucle es infinito; lo acotamos parcheando correr para 1 tick
     real_correr = publicar.correr
     monkeypatch.setattr(publicar, "correr",

@@ -251,7 +251,7 @@ class FuenteAbierta:
         self.cerrada = True
 
 
-@pytest.mark.parametrize("caso", ["perfil_inexistente", "motor_sin_paddle", "broker_caido"])
+@pytest.mark.parametrize("caso", ["perfil_inexistente", "motor_sin_rapidocr", "broker_caido"])
 def test_capturadora_se_libera_si_el_arranque_falla_despues_de_abrirla(monkeypatch, capsys, caso):
     """La garantía titular de la iteración: si algo falla DESPUÉS de abrir la
     capturadora (perfil, motor, broker), el dispositivo se libera y el CLI sale
@@ -266,9 +266,9 @@ def test_capturadora_se_libera_si_el_arranque_falla_despues_de_abrirla(monkeypat
 
     if caso == "perfil_inexistente":
         argv += ["--perfil", "no_existe_este_perfil.json"]
-    elif caso == "motor_sin_paddle":
-        monkeypatch.setitem(_sys.modules, "paddleocr", None)
-        monkeypatch.delitem(_sys.modules, "ocr.motor.paddle", raising=False)
+    elif caso == "motor_sin_rapidocr":
+        monkeypatch.setitem(_sys.modules, "rapidocr_onnxruntime", None)
+        monkeypatch.delitem(_sys.modules, "ocr.motor.rapid", raising=False)
         argv = ["--fuente", "capturadora", "--motor", "produccion", "--solo-consola"]
     else:  # broker_caido
         def broker_roto(*a, **k):

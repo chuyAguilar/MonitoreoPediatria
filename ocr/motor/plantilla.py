@@ -6,9 +6,9 @@ dibujado por ocr/digitos.py; la confianza es el índice de Jaccard (área de
 tinta coincidente / área de tinta total) mínimo entre los glifos del número —
 un score real y explicable, no un valor fijo (ADR-003).
 
-El motor de producción se decidirá con la muestra real del monitor (candidato
-principal: PaddleOCR sobre la GPU de la Jetson) y se enchufa vía la interfaz
-LectorOCR sin tocar el resto del módulo. Ver DECISIONS.md ADR-013.
+El motor de producción es RapidOCR/onnxruntime (ADR-017; antes PaddleOCR,
+ADR-016) y se enchufa vía la interfaz LectorOCR sin tocar el resto del
+módulo. Ver DECISIONS.md ADR-013.
 """
 
 import cv2

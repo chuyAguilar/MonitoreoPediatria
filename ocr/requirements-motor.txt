@@ -7,12 +7,17 @@
 #
 #     pip install -r ocr/requirements-motor.txt
 #
-# Elegido en ADR-016 tras medir PaddleOCR vs EasyOCR vs Tesseract sobre el
-# frame real de SimCore. Versiones fijadas a las validadas en esa medición.
+# RapidOCR sobre ONNX Runtime (ADR-017): ejecuta los modelos PP-OCRv4
+# exportados a ONNX. Elegido porque Paddle Inference segfaultea en la Jetson
+# Orin (aarch64) mientras onnxruntime corre estable, y porque el wheel
+# EMPAQUETA los modelos .onnx (det+rec+cls, ~16 MB): no descarga nada en
+# runtime — apto para despliegue hospitalario sin internet.
 #
-# Nota de despliegue offline (ADR-008): PaddleOCR descarga el modelo de
-# reconocimiento la primera vez (~/.paddlex/official_models). En un hospital
-# sin internet hay que pre-descargarlo y empaquetarlo. Camino a Jetson en
-# ocr/README.md.
-paddleocr==3.7.0
-paddlepaddle==3.3.1
+# Par validado en la Jetson (env ocr-monitoreo, Python 3.10, aarch64):
+# rapidocr-onnxruntime==1.4.4 con onnxruntime==1.22.1 (resuelto por pip).
+# Se pinnea solo rapidocr; onnxruntime lo resuelve pip (>=1.7.0).
+#
+# El adaptador de PaddleOCR (ocr/motor/paddle.py) se conserva como motor
+# alternativo en x86_64, pero ya no se declara aquí: quien lo quiera instala
+# paddleocr/paddlepaddle a mano y lo pasa por API con motor=LectorPaddleOCR().
+rapidocr-onnxruntime==1.4.4

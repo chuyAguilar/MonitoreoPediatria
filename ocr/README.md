@@ -5,14 +5,18 @@ pantalla de un monitor y produce el JSON del **contrato 1.1** con `origen: "ocr"
 `confianza` real por signo. **Offline** — sin capturadora, sin MQTT, sin red.
 
 Contexto y porqués: [`../DECISIONS.md`](../DECISIONS.md) (ADR-002, ADR-003, ADR-013,
-ADR-014, ADR-015, **ADR-016**) · contrato: [`../docs/ito2/CONTRATO_DATOS.md`](../docs/ito2/CONTRATO_DATOS.md).
+ADR-014, ADR-015, ADR-016, **ADR-017**) · contrato: [`../docs/ito2/CONTRATO_DATOS.md`](../docs/ito2/CONTRATO_DATOS.md).
 
-> **Dos motores, un mismo pipeline (ADR-016).**
-> - **PaddleOCR** = motor de **producción**, lee monitores reales (frame de SimCore: 6/6
->   signos, 9/9 frames perturbados, 0 valores falsos). Dependencia **opcional**
->   (`ocr/requirements-motor.txt`).
+> **Dos motores, un mismo pipeline (ADR-017).**
+> - **RapidOCR/ONNX Runtime** = motor de **producción**: mismos modelos PP-OCR, backend
+>   `onnxruntime` — estable en la Jetson aarch64 (Paddle Inference segfaultea ahí, ADR-017),
+>   lee ambos frames de referencia (6/6 signos, 9/9 frames perturbados, 0 valores falsos,
+>   ~88 ms/frame en CPU) y trae los modelos **dentro del wheel** (offline de fábrica).
+>   Dependencia **opcional** (`ocr/requirements-motor.txt`).
 > - **Plantilla 7-seg** = **andamiaje** sin dependencias: lee el mock sintético pero **no**
 >   la tipografía real (ADR-014). Solo para tests y para el mock por CLI.
+> - (PaddleOCR queda como adaptador **alternativo** en x86_64 — `ocr/motor/paddle.py` —
+>   sin declarar en requirements; se usa por API con `motor=LectorPaddleOCR()`.)
 >
 > Sin el motor de producción instalado, el motor por defecto **falla fuerte** (no lee en
 > silencio). En cualquier caso la red de seguridad manda: ante una lectura dudosa, `null`,
@@ -25,7 +29,7 @@ paho-mqtt — sin las dependencias de otros módulos del repo). El motor de prod
 
 ```bash
 pip install -r ocr/requirements.txt         # runtime del módulo (autocontenido)
-pip install -r ocr/requirements-motor.txt   # PaddleOCR (opcional; solo para leer real)
+pip install -r ocr/requirements-motor.txt   # RapidOCR/onnxruntime (para leer monitores reales)
 ```
 
 Desde la **raíz del repo**:
@@ -70,10 +74,10 @@ web existente** — el mismo camino que el `simulador/`. Solo transporta lo que 
 validó (los `null` se publican como `null`; la web los muestra como "--").
 
 ```bash
-# Producción: PaddleOCR lee el frame de SimCore y lo publica (requiere el motor y Mosquitto)
+# Producción: RapidOCR lee el frame de SimCore y lo publica (requiere el motor y Mosquitto)
 python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01
 
-# Solo transporte, sin PaddleOCR: valida MQTT/estado/web (los valores van null)
+# Solo transporte, sin el motor real: valida MQTT/estado/web (los valores van null)
 python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01 --motor plantilla
 
 # Sin broker, imprime el JSON en consola (prueba rápida)
@@ -124,20 +128,20 @@ en el screenshot — son capturas de momentos distintos).
 ### Runbook: desplegar en la Jetson
 
 1. **Clonar el repo** en la Jetson (`jetson@…`, JetPack 6 / L4T r36, aarch64).
-2. **Entorno aislado con Python 3.10** — el `base` de conda es 3.13 (demasiado nuevo para
-   PaddleOCR) y **no tocar el entorno de ROS** que vive en esa Jetson:
+2. **Entorno aislado con Python 3.10** — el `base` de conda es 3.13 y **no tocar el entorno
+   de ROS** que vive en esa Jetson:
    ```bash
    conda create -n ocr-monitoreo python=3.10 -y
    conda activate ocr-monitoreo
    pip install -r ocr/requirements.txt
    pip install -r ocr/requirements-motor.txt
    ```
-   Si `paddlepaddle` no instala directo en aarch64/JetPack, la vía alternativa es exportar
-   el modelo a ONNX y correr con `onnxruntime` (ADR-016) — repórtalo para esa iteración.
-3. **Pre-descarga del modelo** (una vez, con internet): correr cualquier lectura hace que
-   PaddleOCR baje su modelo a `~/.paddlex/official_models`. Con
-   `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` evita el chequeo de red en arranques
-   posteriores. Para operar sin internet, esa carpeta debe existir ya poblada.
+   El motor es **RapidOCR sobre ONNX Runtime** (ADR-017): `onnxruntime` corre estable en
+   aarch64 (par validado en esta placa: rapidocr 1.4.4 + onnxruntime 1.22.1). No instalar
+   `paddlepaddle` — su motor de inferencia segfaultea en la Orin.
+3. **Sin pre-descarga de modelos**: el wheel de `rapidocr-onnxruntime` trae los `.onnx`
+   empaquetados (det+rec+cls, ~16 MB), así que funciona **sin internet** desde el primer
+   arranque. No hay carpeta que pre-sembrar ni variables de entorno que fijar.
 4. **La fuente de video debe estar activa**: la Mac en **modo espejo** (o SimCore en el
    monitor externo) — si no, la capturadora entrega negro y todos los signos salen `null`
    (comportamiento correcto: no hay nada que leer).
@@ -182,7 +186,8 @@ perfiles.py     Carga y validación de perfiles de ROI
 preproceso.py   Recorte de ROI, gris, umbral Otsu, normalización
 digitos.py      Render de dígitos 7 segmentos y '/' (compartido mock ↔ motor)
 motor/base.py   Interfaz LectorOCR (motor intercambiable)
-motor/paddle.py     Motor de PRODUCCIÓN (PaddleOCR); dependencia opcional (ADR-016)
+motor/rapid.py      Motor de PRODUCCIÓN (RapidOCR/onnxruntime); dep. opcional (ADR-017)
+motor/paddle.py     Motor alternativo x86_64 (histórico ADR-016; segfaultea en aarch64)
 motor/plantilla.py  Motor por plantilla — andamiaje, no apto para producción (ADR-014)
 herramientas/calibrar.py        Calibrador de ROIs (overlay + tira de contacto)
 herramientas/evaluar_motores.py Comparativa reproducible de motores (ADR-016)
@@ -276,18 +281,16 @@ confianza en [0, 1]; `_confianza_valida` es la última red, no el primer filtro.
 caracteres no numéricos del texto: si el modelo leyó una letra, deja que el lector lo rechace
 entero (mejor `null` que un número truncado inventado).
 
-## Camino a la Jetson (documentado, no implementado — ADR-016)
+## El motor en la Jetson (ADR-017)
 
-- **Recomendado:** exportar el modelo rec de PaddleOCR a **ONNX** (`paddle2onnx`) y correrlo
-  con `onnxruntime-gpu` (TensorRT/CUDA) en el Orin Nano. Más ligero que instalar
-  `paddlepaddle` en el edge. **Pendiente:** la paridad ONNX↔modelo no se pudo verificar en el
-  dev de Windows (`paddle2onnx` falla al cargar su DLL ahí; funciona en Linux/aarch64) — se
-  valida en el target Jetson.
-- **Fallbacks:** `paddlepaddle` directo con wheels aarch64; o EasyOCR (PyTorch para Jetson).
-- **Offline (sin internet):** pre-descargar y empaquetar el modelo; para el edge, el modelo
-  **mobile** en vez del `medium` del dev.
+La vía ONNX que ADR-016 dejó anotada resultó ser **el camino de producción**, y ya está
+integrada: `rapidocr-onnxruntime` ejecuta los modelos PP-OCR con `onnxruntime`
+(CPUExecutionProvider), estable en aarch64 donde Paddle Inference segfaultea. Los modelos
+vienen dentro del wheel — sin descargas en runtime. Seguimiento pendiente: medir ms/frame
+en la Orin (a 1 Hz rec-only sobra de lejos: 88 ms/frame en CPU x86); si algún día hiciera
+falta, el ExecutionProvider de GPU/TensorRT es la palanca.
 
 ## Fuera de alcance de esta iteración
 
-Capturadora/V4L2, MQTT, video/RTSP, multi-cama concurrente y despliegue físico en la Jetson.
+Multi-cama, alarmas, caja negra, respiración por IA.
 Ver el estado general en [`../CONTEXT.md`](../CONTEXT.md) §5.

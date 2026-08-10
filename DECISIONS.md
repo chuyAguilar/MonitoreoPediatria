@@ -23,7 +23,8 @@
 | ADR-013 | OCR iteración 1: motor de plantilla + perfiles ROI en JSON | Aceptada |
 | ADR-014 | El motor de plantilla no sirve con tipografía real: hace falta OCR de verdad | Aceptada |
 | ADR-015 | Perfiles: signo ausente y campos combinados (PNI `SIS/DIA`) | Aceptada |
-| ADR-016 | Motor OCR de producción: PaddleOCR, con entrada cruda al motor | Aceptada |
+| ADR-016 | Motor OCR de producción: PaddleOCR, con entrada cruda al motor | Reemplazada (motor) |
+| ADR-017 | Paddle Inference segfaultea en aarch64: producción pasa a RapidOCR/ONNX Runtime | Aceptada |
 
 ---
 
@@ -413,7 +414,10 @@ que revisarlo en la iteración 3 con capturas en vivo, donde el valor cambia sol
 
 ## ADR-016 — Motor OCR de producción: PaddleOCR, con entrada cruda al motor
 
-**Estado:** Aceptada (jul 2026)
+**Estado:** Reemplazada **en la elección del motor** por ADR-017 (ago 2026). La
+**metodología de evaluación** (medir lectura + comportamiento en el fallo sobre el frame
+real, con el fallo pesando más que el acierto), la decisión de **entrada cruda al motor**
+y la política del **default que falla fuerte** siguen plenamente vigentes.
 
 **Contexto.** ADR-014 cerró la vía del motor de plantilla para producción y dejó el test de
 aceptación del frame real en `xfail`. Esta iteración elige e integra el motor de producción,
@@ -492,3 +496,51 @@ producción es pesada y descarga modelos; el despliegue offline y el camino ONNX
 trabajo de la iteración de despliegue. (−) La decisión se tomó sobre **una** muestra (SimCore,
 9 variantes); se reconfirmará con la muestra del **uMEC12 real** cuando llegue de la
 capturadora.
+
+---
+
+## ADR-017 — Paddle Inference segfaultea en aarch64: producción pasa a RapidOCR/ONNX Runtime
+
+**Estado:** Aceptada (ago 2026)
+
+**Contexto.** Al desplegar el motor de ADR-016 en el target real (Jetson Orin Nano, JetPack 6 /
+L4T r36, aarch64, env conda `ocr-monitoreo` con Python 3.10) apareció el riesgo que aquel ADR
+dejó anotado: toda la cadena instala, `paddleocr` importa, el **core** de PaddlePaddle opera
+(aritmética de tensores OK), pero **Paddle Inference crashea con SIGSEGV en la primera pasada
+del modelo OCR, de forma reproducible**. Se descartaron como causa: límite de hilos
+(`OMP/OPENBLAS_NUM_THREADS=1`), `FLAGS_use_mkldnn=0`, aislamiento de `~/.local`
+(`PYTHONNOUSERSITE=1`) y numpy 1.26.4. Conclusión: el wheel de Paddle Inference para aarch64
+es inestable en esta placa. Sin motor, el módulo no lee nada en producción.
+
+**Decisión.** El motor de producción pasa a **RapidOCR sobre ONNX Runtime**
+(`rapidocr-onnxruntime==1.4.4`, adaptador `ocr/motor/rapid.py`): ejecuta los **mismos modelos
+PP-OCR (v4)** exportados a ONNX, en modo **reconocimiento** sobre nuestras ROIs (sin
+detección), con `onnxruntime` (CPUExecutionProvider), que corre estable en aarch64. Par
+validado en la Jetson: `rapidocr-onnxruntime==1.4.4` + `onnxruntime==1.22.1` (se pinnea solo
+rapidocr; onnxruntime lo resuelve pip — en dev resolvió 1.23.2 con resultados idénticos).
+
+**Evidencia.**
+- **Banco (Jetson, frame real de la capturadora):** FC 73 (0.9998), SpO2 98, FR 14, Temp 36.8,
+  PNI 120/75 (0.9993) y MAP 90, sin ningún segfault.
+- **Sonda de API (1.4.4):** `engine(img, use_det=False, use_cls=False, use_rec=True)` →
+  `([[texto, score]], [tiempos])`, una entrada por ROI; imagen negra → `[['', 0.0]]`; el
+  separador `/` de la PNI se preserva (`'120/75'`); acepta gris y vistas no contiguas.
+- **Paridad medida en dev (evaluar_motores.py):** RapidOCR y PaddleOCR leen **idéntico**
+  (6/6 en frame limpio, 9/9 en frames perturbados, 0 valores falsos ambos), y RapidOCR es
+  **~21× más rápido en CPU** (88 ms vs 1909 ms por frame).
+- **Modelos empaquetados:** el wheel trae los `.onnx` dentro (det 4.7 + rec 10.9 + cls
+  0.6 MB): **no descarga nada en runtime** → apto para despliegue hospitalario sin internet,
+  sin pre-sembrado de `~/.paddlex`.
+
+**Lo que NO cambia.** La interfaz `LectorOCR`, la entrada cruda al motor, el saneo mínimo
+(espacios fuera, letras dentro para que el lector las rechace), todas las salvaguardas del
+lector, el contrato 1.1, el publicador y el fail-hard de `motor_por_defecto()` (ahora apunta a
+rapidocr). El swap es exactamente el que ADR-013 prometía: una clase nueva.
+
+**Consecuencias.** (+) Motor estable en el target de producción y mucho más ligero (arranque
+en ~s y 88 ms/frame en CPU; la dependencia pesa MB, no GB). (+) Offline resuelto de fábrica.
+(+) `LectorPaddleOCR` se conserva como adaptador alternativo en x86_64 (evidencia ejecutable
+de ADR-016), pero **fuera de `requirements-motor.txt`** y del CLI. (−) CPU-only por ahora: el
+ExecutionProvider de GPU/TensorRT queda como optimización futura si el ritmo lo pidiera (a
+1 Hz rec-only sobra; **seguimiento**: medir ms/frame en la Orin en el banco). (−) API de
+RapidOCR fijada por sonda contra la 1.4.4 pinneada; subir de versión exige re-sondear.

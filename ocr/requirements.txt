@@ -5,7 +5,7 @@
 # ocr/ es autocontenido y con esto le basta para capturar y publicar:
 #
 #     pip install -r ocr/requirements.txt          # andamiaje + captura + MQTT
-#     pip install -r ocr/requirements-motor.txt    # motor de producción (PaddleOCR)
+#     pip install -r ocr/requirements-motor.txt    # motor de producción (RapidOCR/onnxruntime)
 #
 # Para correr los tests añade: pip install pytest
 opencv-python

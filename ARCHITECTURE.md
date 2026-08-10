@@ -223,7 +223,8 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   preproceso.py   Recorte ROI, gris, umbral Otsu, normalizacion
   digitos.py      Render de digitos 7 segmentos y '/' (compartido mock <-> motor)
   motor/          Motores OCR intercambiables (base.py = interfaz LectorOCR;
-                  paddle.py = PRODUCCION (PaddleOCR, dep. opcional, ADR-016);
+                  rapid.py = PRODUCCION (RapidOCR/onnxruntime, dep. opcional, ADR-017);
+                  paddle.py = alternativo x86_64 (historico ADR-016);
                   plantilla.py = andamiaje, no apto para produccion, ver ADR-014)
   herramientas/   calibrar.py (ROIs) y evaluar_motores.py (comparativa ADR-016)
   perfiles/       Perfiles de monitor: monitor_mock.json y simcore/ (frame real)
@@ -236,12 +237,12 @@ ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 ```
 
 > `ocr/` cubre la cadena completa del edge: **captura en vivo** de la capturadora HDMI→USB
-> por V4L2 (`FuenteCapturadora`) → lectura OCR (**PaddleOCR**, ADR-016; el de plantilla es
-> andamiaje sin dependencias) → **publicación MQTT** del contrato (vitales + estado), con lo
-> que la cama aparece en el dashboard end-to-end. El perfil de SimCore está calibrado contra
-> el frame real de la capturadora. Pendiente: instalar el motor en la Jetson (runbook en
-> `ocr/README.md`; en aarch64 puede requerir la vía ONNX de ADR-016) y multi-cama. El resto
-> del stack (servidor, transporte, web) ya está probado desde el Hito 2.
+> por V4L2 (`FuenteCapturadora`) → lectura OCR (**RapidOCR/ONNX Runtime**, ADR-017 — estable
+> en la Jetson aarch64, modelos empaquetados en el wheel; el de plantilla es andamiaje sin
+> dependencias) → **publicación MQTT** del contrato (vitales + estado), con lo que la cama
+> aparece en el dashboard end-to-end. El perfil de SimCore está calibrado contra el frame
+> real de la capturadora. Pendiente: la corrida en vivo validada en el banco y multi-cama.
+> El resto del stack (servidor, transporte, web) ya está probado desde el Hito 2.
 
 ---
 

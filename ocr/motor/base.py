@@ -1,9 +1,9 @@
 """Interfaz del motor OCR intercambiable.
 
 El resto del módulo (perfiles, preproceso, lector, contrato) solo conoce esta
-interfaz. Cambiar de motor (p. ej. a PaddleOCR cuando haya muestra real del
-monitor) es implementar leer() en una clase nueva y pasarla a
-ocr.lector.leer_imagen(motor=...). Ver DECISIONS.md ADR-013.
+interfaz. Cambiar de motor es implementar leer() en una clase nueva y pasarla
+a ocr.lector.leer_imagen(motor=...) — así entraron PaddleOCR (ADR-016) y
+RapidOCR (ADR-017) sin tocar el pipeline. Ver DECISIONS.md ADR-013.
 """
 
 from abc import ABC, abstractmethod

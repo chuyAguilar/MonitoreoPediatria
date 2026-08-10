@@ -18,10 +18,10 @@ def motor():
 
 @pytest.fixture(scope="session")
 def motor_produccion():
-    """Motor de producción (PaddleOCR). Salta si la dependencia no está instalada.
+    """Motor de producción (RapidOCR/onnxruntime, ADR-017). Salta si no está.
 
-    Cargar el modelo es lento (~segundos): scope de sesión para pagarlo una vez.
+    Cargar los modelos tiene coste: scope de sesión para pagarlo una vez.
     """
-    pytest.importorskip("paddleocr", reason="motor de producción no instalado")
-    from ocr.motor.paddle import LectorPaddleOCR
-    return LectorPaddleOCR()
+    pytest.importorskip("rapidocr_onnxruntime", reason="motor de producción no instalado")
+    from ocr.motor.rapid import LectorRapidOCR
+    return LectorRapidOCR()
