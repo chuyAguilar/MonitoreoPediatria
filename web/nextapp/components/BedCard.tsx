@@ -2,8 +2,8 @@
 
 import type { CamaState } from '@/lib/types';
 import { formatVal, formatTsCorto, formatPniTs } from '@/lib/utils';
-import VideoWHEP from './VideoWHEP';
 import styles from './BedCard.module.css';
+import videoStyles from './VideoWHEP.module.css';
 
 interface BedCardProps {
 	cama: CamaState;
@@ -59,7 +59,16 @@ export default function BedCard({ cama, onSelect }: BedCardProps) {
 				</div>
 			</div>
 
-			<VideoWHEP camaId={id} />
+			{/* Video A DEMANDA (ADR-019): la rejilla no abre conexiones WebRTC —
+			    con ~10 cámaras × ~5 espectadores (y remotos por Tailscale) abrir
+			    todo siempre no escala. El video en vivo se conecta únicamente al
+			    abrir el detalle de la cama; el triaje en rejilla es por datos. */}
+			<div className={videoStyles.zonaVideo}>
+				<div className={videoStyles.sinCamara}>
+					<span className={videoStyles.sinCamaraIcono} aria-hidden="true">📷</span>
+					<span className={videoStyles.sinCamaraTexto}>Video en el detalle — abre la cama</span>
+				</div>
+			</div>
 
 			<div className={styles.signosGrid} id={`signos-${id}`}>
 				{simpleSigns.map((cfg) => {

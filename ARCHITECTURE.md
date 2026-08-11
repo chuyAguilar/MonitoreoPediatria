@@ -232,6 +232,8 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   mock/           Generadores de imagen mock (completo y con PNI combinada)
   tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
 web/nextapp/    Dashboard Next.js (export estatico). Consume MQTT-WS + WebRTC.
+                Video A DEMANDA (ADR-019): la rejilla es solo datos; el video vivo
+                se conecta al abrir el detalle. /diag.html = diagnostico de video.
 docs/ito1/      Doc e imagenes Hito 1 (video end-to-end)
 docs/ito2/      Doc, contrato de datos, runbook y diagramas Hito 2
 ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)

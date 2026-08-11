@@ -75,6 +75,23 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now mediamtx
 ```
 
+**Configuración WebRTC obligatoria** (lección del 12-ago-2026, ADR-019): MediaMTX debe
+**anunciar sus IPs reales** como candidatos ICE. Si solo anuncia `127.0.0.1` (pasa cuando la
+enumeración de interfaces falla o está restringida), todo cliente WebRTC desde otra máquina
+se queda en `connecting → failed` ("Reconectando…" en el dashboard) aunque la señalización
+funcione. En `/home/chuy/mediamtx/mediamtx.yml`:
+
+```yaml
+# IPs con las que los navegadores pueden alcanzar a ESTE servidor
+# (Tailscale y LAN local). Sin esto, el video WebRTC no conecta cross-máquina.
+webrtcAdditionalHosts: [100.110.157.112, 192.168.110.4]
+```
+
+y `sudo systemctl restart mediamtx`. Verificación rápida desde cualquier máquina de la
+tailnet: la página `/diag.html?stream=<cama>` del dashboard muestra en consola los estados; si
+el servidor sigue anunciando solo loopback, el dashboard lo advierte explícitamente en la
+consola con el arreglo.
+
 ### 1.3 Servidor web estático (sirve el dashboard) — como servicio
 Primero se necesita el build del dashboard en `~/dashboard` (ver Parte 4 para generarlo y copiarlo). Luego:
 ```bash

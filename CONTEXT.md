@@ -135,6 +135,13 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
   real por capacidades V4L2; identidad ausente → **falla fuerte**, nunca cae a un
   `/dev/videoN` cualquiera. `--listar-dispositivos` y `sondear_dispositivos.py` para
   descubrir la identidad. Rutas/índices literales siguen funcionando tal cual.
+- **Dashboard: video a demanda + WebRTC arreglado** (ADR-019): la rejilla ya no abre
+  conexiones WebRTC (triaje por datos + placeholder); el video vivo se conecta solo al abrir
+  el detalle. Cliente endurecido (gracia en `disconnected`, sin STUN de internet, etiquetas
+  diagnósticas, detector de answer solo-loopback) y página `/diag.html?stream=…` para aislar
+  problemas de video. **Pendiente del servidor**: aplicar `webrtcAdditionalHosts:
+  [100.110.157.112, 192.168.110.4]` en `mediamtx.yml` + restart (la causa raíz del
+  "Reconectando…" del 12-ago: MediaMTX anunciaba solo el candidato ICE 127.0.0.1).
 - Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton, con y sin la
   webcam conectada a la vez); multi-cama (desambiguo por `by-path`); reconfirmar contra el
   **uMEC12 real** cuando llegue; seguimiento de ms/frame de RapidOCR en la Orin.

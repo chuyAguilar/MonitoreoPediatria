@@ -26,6 +26,7 @@
 | ADR-016 | Motor OCR de producción: PaddleOCR, con entrada cruda al motor | Reemplazada (motor) |
 | ADR-017 | Paddle Inference segfaultea en aarch64: producción pasa a RapidOCR/ONNX Runtime | Aceptada |
 | ADR-018 | Capturadora por identidad estable (serial/by-id) con fail-hard, no por índice | Aceptada |
+| ADR-019 | Dashboard: video a demanda + política de conexión WebRTC (ICE sin internet, gracia) | Aceptada |
 
 ---
 
@@ -621,3 +622,74 @@ colisionarían en `by-id`** (udev deja un solo symlink), `by-path` es el camino 
 resolución por identidad requiere Linux/V4L2 (en dev, error claro y tests con enumeración
 mockeada). (−) El default de `--dispositivo` sigue siendo `/dev/video0` por
 retrocompatibilidad: la práctica recomendada (runbook) es fijar el serial.
+
+---
+
+## ADR-019 — Dashboard: video a demanda + política de conexión WebRTC
+
+**Estado:** Aceptada (ago 2026)
+
+**Contexto — el síntoma del banco (12 ago 2026).** Con un stream publicado a `cama-09`, la
+tarjeta del dashboard se quedaba en "Reconectando…" en negro, mientras el reproductor directo
+de MediaMTX reproducía el mismo stream desde el mismo navegador. Además, la rejilla abría un
+PeerConnection por cama SIEMPRE — insostenible para la meta (~10 cámaras × ~5 espectadores,
+remotos por Tailscale).
+
+**Diagnóstico (con evidencia reproducida, no supuesta).** El diagnóstico se hizo por capas
+sobre el servidor real desde dev, en este orden:
+1. **CORS descartado con sonda HTTP**: OPTIONS y POST al endpoint WHEP real devuelven
+   `Access-Control-Allow-Origin: *` (MediaMTX lo trae de fábrica).
+2. **Síntoma reproducido** con el cliente real servido en `:8080` contra el MediaMTX real:
+   `connecting → failed` en bucle, sin ningún error de fetch — la señalización funciona.
+3. **Causa raíz**: el SDP answer de MediaMTX anuncia **un único candidato ICE:
+   `127.0.0.1:8189` (loopback)** — inalcanzable desde cualquier otra máquina; todos los
+   pares ICE fallan.
+4. **Prueba positiva**: reescribiendo en el cliente `127.0.0.1` → `100.110.157.112` en el
+   answer, la misma conexión pasa a `connected` con par ICE nominado y pista de video
+   recibida. El único problema es la dirección anunciada; UDP 8189 fluye por la tailnet.
+   (El reproductor directo funciona de chiripa: chequeos servidor→cliente con resolución
+   mDNS en la misma LAN generan pares peer-reflexive — frágil y no generalizable.)
+
+**Decisión.**
+1. **Arreglo raíz (servidor, lo aplica Dr. Milton):** `webrtcAdditionalHosts:
+   [100.110.157.112, 192.168.110.4]` en `mediamtx.yml` + restart. Documentado en el runbook
+   como configuración obligatoria. Pendiente de su `grep -i webrtc` para entender por qué la
+   enumeración de interfaces solo dio loopback (posible sandbox del servicio systemd).
+2. **Cliente endurecido** (`lib/whep.ts`), correcto cross-red:
+   - **Sin servidores ICE por defecto** (fuera el STUN de Google hardcodeado): entre pares de
+     la tailnet los candidatos host bastan y el hospital no tiene internet (ADR-008/009).
+     `NEXT_PUBLIC_ICE_SERVERS` (JSON) para escenarios futuros.
+   - **Gracia para `disconnected`** (~4 s): suele ser transitorio y recuperarse; derribar al
+     primer `disconnected` fabricaba bucles de reconexión. Solo `failed` derriba de inmediato.
+   - **Etiquetas que diagnostican**: `404` → "Sin cámara (nadie publica)"; fallo de red/CORS
+     → "Sin conexión con el servidor de video"; ICE caído → "Reconectando…".
+   - **Detector del fallo de hoy**: si el answer solo trae candidatos loopback, la consola
+     lo advierte con el arreglo exacto (`webrtcAdditionalHosts`). El incidente queda
+     codificado como diagnóstico permanente.
+   - **"Conectado" se declara solo en `connectionState === 'connected'`** (hallazgo de la
+     revisión adversarial): por spec WebRTC el evento `track` se dispara al aplicar el SDP
+     answer, ANTES de que ICE conecte — declarar conectado ahí mostraba un panel negro
+     falso-conectado precisamente en el incidente loopback, tapando las etiquetas. La rama
+     `connected` además re-engancha una recuperación tardía tras derribo por gracia y
+     cancela el retry pendiente (que habría destruido una conexión viva).
+   - **Solo video**: las cámaras no llevan micrófono (ADR-010); reintroducir el transceiver
+     de audio es una línea documentada.
+3. **Video A DEMANDA**: la rejilla **no abre conexiones WebRTC** — muestra datos + placeholder
+   ("Video en el detalle"); el video vivo se conecta únicamente al abrir el detalle de una
+   cama y se cierra al cerrarlo. El triaje en rejilla es por datos (que es el diseño clínico).
+   Escala: espectador × cama enfocada = 1 PC, no espectador × todas.
+4. **Página de diagnóstico `/diag.html?stream=<nombre>`**: monta el cliente WHEP real contra
+   cualquier stream sin depender de MQTT — la herramienta del operador cuando un video no
+   conecta.
+
+**Verificación (E2E local, dev):** con MediaMTX + ffmpeg locales y el build servido en
+`:8080`: conexión `connecting → connected` y video reproduciendo (640×480); 404 → etiqueta
+correcta; rejilla con 5 camas reales descubiertas por MQTT y **cero** elementos de video;
+abrir detalle → 1 video reproduciendo; cerrarlo → 0. Contra el servidor real (aún sin el
+arreglo): la advertencia de loopback dispara con el mensaje accionable. `npm run build`
+limpio (y sin `.babelrc`: se eliminó tras verificar que el build con SWC pasa).
+
+**Seguimiento separado (no en este ADR):** espectadores remotos **fuera** de la tailnet
+(TURN, exposición de puertos). Hoy remoto = vía Tailscale, que además es lo único compatible
+con CONTEXT §2 ("nada de exponer puertos a internet abierto"). Si algún día se quiere
+internet abierto, será su propia decisión con sus propias implicaciones de seguridad.

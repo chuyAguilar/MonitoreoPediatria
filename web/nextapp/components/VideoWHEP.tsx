@@ -17,6 +17,11 @@ export default function VideoWHEP({ camaId }: VideoWHEPProps) {
 		const videoEl = videoRef.current;
 		if (!videoEl) return;
 
+		// Si camaId cambia sin desmontar el componente, el estado de la cámara
+		// anterior no debe sobrevivir a la negociación de la nueva.
+		setConnected(false);
+		setStatusLabel('Conectando cámara…');
+
 		const handle = connectWhep(camaId, videoEl, (isConnected, label) => {
 			setConnected(isConnected);
 			if (!isConnected) {
