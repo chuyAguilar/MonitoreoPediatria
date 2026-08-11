@@ -129,8 +129,14 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
   (`frame_capturadora.png`) y verificado también sobre el screenshot: un solo perfil lee
   ambos frames de referencia. Runbook de despliegue en `ocr/README.md` (env Python 3.10
   aislado, sin tocar ROS).
-- Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton: SimCore →
-  capturadora → Jetson con RapidOCR → dashboard); multi-cama; reconfirmar contra el
+- **Capturadora por identidad estable** (iteración 7, ADR-018): tras el incidente del banco
+  (una webcam robó `/dev/video0` y el OCR leyó la webcam → todo `null`), `--dispositivo`
+  acepta serial/nombre/by-id (`35562055` / `UltraSemi`) y resuelve el **nodo de captura**
+  real por capacidades V4L2; identidad ausente → **falla fuerte**, nunca cae a un
+  `/dev/videoN` cualquiera. `--listar-dispositivos` y `sondear_dispositivos.py` para
+  descubrir la identidad. Rutas/índices literales siguen funcionando tal cual.
+- Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton, con y sin la
+  webcam conectada a la vez); multi-cama (desambiguo por `by-path`); reconfirmar contra el
   **uMEC12 real** cuando llegue; seguimiento de ms/frame de RapidOCR en la Orin.
 - La decisión del motor se tomó con la muestra de SimCore; se **reconfirmará con el uMEC12
   real** cuando llegue de la capturadora.

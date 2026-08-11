@@ -105,9 +105,38 @@ la `FuenteCapturadora` lee el dispositivo V4L2 en vivo (MJPG 1920×1080), descar
 ~15 frames negros de arranque y valida que la resolución coincida con la del perfil:
 
 ```bash
-python -m ocr.publicar --fuente capturadora --dispositivo /dev/video0 \
+python -m ocr.publicar --fuente capturadora --dispositivo 35562055 \
     --broker 100.110.157.112 --cama-id cama-09
 ```
+
+### La capturadora se fija por IDENTIDAD, no por índice (ADR-018)
+
+`/dev/videoN` **baila** con el orden de enumeración USB: en el banco, una webcam robó
+`/dev/video0` y el OCR estuvo leyendo la webcam (todo `null`) hasta descubrirlo. Por eso
+`--dispositivo` acepta una **identidad estable** — el serial, el modelo o la ruta
+`by-id`/`by-path` — que se resuelve al **nodo de captura real** (por capacidades V4L2:
+el nodo de metadatos hermano no sirve y el nombre de tarjeta no los distingue):
+
+```bash
+python -m ocr.publicar --listar-dispositivos     # descubre tu identificador estable
+```
+
+- **Identidad** (recomendado): `--dispositivo 35562055` (serial) o `--dispositivo UltraSemi`.
+  Si esa identidad **no está presente, el arranque falla fuerte** con un error accionable —
+  nunca cae a un `/dev/videoN` cualquiera (así fue como se leyó la webcam). Los apodos
+  demasiado genéricos (`usb`, `usb3`, `camera`…) **se rechazan a propósito**: con la
+  capturadora ausente coincidirían en silencio con otra fuente. Usa el serial.
+- **Literal** (retrocompatible): `--dispositivo /dev/video2` o un índice `0..999` se abren
+  tal cual, sin resolución — el usuario manda.
+- Ambigüedad (dos coincidencias) → error pidiendo desambiguar por serial o `by-path`
+  (el puerto físico: el desempate para dos capturadoras idénticas, multi-cama futura).
+- La resolución ocurre **una sola vez, al arrancar**: si el dispositivo desaparece a mitad
+  de corrida, el proceso lanza y termina (offline en la web); re-resolver en caliente sería
+  cambiar de fuente en silencio.
+
+Diagnóstico de campo: `python -m ocr.herramientas.sondear_dispositivos` (¿qué hay
+conectado, con qué identidad, y qué nodo es captura vs metadatos?). Primer paso cuando
+"todos los signos salen null": ¿de verdad estás leyendo la capturadora?
 
 Política de seguridad ante fallo de lectura: reintenta unas pocas veces y luego **lanza**
 (el `finally` publica `offline` y el proceso termina con error). **Nunca sirve un frame
@@ -145,7 +174,10 @@ en el screenshot — son capturas de momentos distintos).
 4. **La fuente de video debe estar activa**: la Mac en **modo espejo** (o SimCore en el
    monitor externo) — si no, la capturadora entrega negro y todos los signos salen `null`
    (comportamiento correcto: no hay nada que leer).
-5. **Correr y verificar**: el comando de arriba; en el servidor
+5. **Identificar la capturadora** (una vez): `python -m ocr.publicar --listar-dispositivos`
+   y fijar el serial en el comando (en este banco: `--dispositivo 35562055`). Así una
+   webcam conectada o un cambio de puerto no desvían la lectura a otra fuente (ADR-018).
+6. **Correr y verificar**: el comando de arriba; en el servidor
    `mosquitto_sub -h localhost -t 'monitoreo/#' -v` y la cama en el dashboard, cambiando
    en vivo con SimCore.
 6. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
@@ -180,6 +212,7 @@ cli.py          Lee una imagen y emite el JSON (python -m ocr.cli)
 publicar.py     Puente OCR → MQTT en bucle (python -m ocr.publicar)
 publicador.py   PublicadorOCR: transporta el contrato por MQTT (cliente inyectado)
 fuente.py       FuenteFrames + FuenteImagenFija + FuenteCapturadora (V4L2 en vivo)
+dispositivos.py Identidad estable de la capturadora: enumeración V4L2 + resolución (ADR-018)
 tiempo.py       ahora_iso(): marca de tiempo del contrato (compartida lector/publicador)
 contrato.py     Construcción del JSON 1.1 (unidades fijas, PNI todo-o-nada)
 perfiles.py     Carga y validación de perfiles de ROI
@@ -191,6 +224,7 @@ motor/paddle.py     Motor alternativo x86_64 (histórico ADR-016; segfaultea en 
 motor/plantilla.py  Motor por plantilla — andamiaje, no apto para producción (ADR-014)
 herramientas/calibrar.py        Calibrador de ROIs (overlay + tira de contacto)
 herramientas/evaluar_motores.py Comparativa reproducible de motores (ADR-016)
+herramientas/sondear_dispositivos.py  Sonda de campo: qué capturadoras hay y su identidad
 perfiles/       Perfiles de monitor (JSON declarativo)
   monitor_mock.json         mock sintético (iteración 1)
   simcore/                  perfil + 2 frames de referencia (screenshot y capturadora)

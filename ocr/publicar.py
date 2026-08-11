@@ -104,13 +104,31 @@ def main(argv=None) -> int:
     p.add_argument("--fuente", choices=("imagen", "capturadora"), default="imagen",
                    help="imagen = frame fijo (def.); capturadora = captura V4L2 en vivo")
     p.add_argument("--dispositivo", default="/dev/video0",
-                   help="dispositivo V4L2 para --fuente capturadora (def. /dev/video0)")
+                   help="capturadora para --fuente capturadora: ruta/índice literal "
+                        "(def. /dev/video0) o IDENTIDAD ESTABLE — serial, nombre o "
+                        "by-id, p. ej. 35562055 o UltraSemi (ver --listar-dispositivos)")
+    p.add_argument("--listar-dispositivos", action="store_true",
+                   help="lista las capturadoras V4L2 detectadas (nombre, serial, by-id, "
+                        "nodo de captura) y sale")
     p.add_argument("--imagen", default=FRAME_DEFECTO, help="frame fijo a leer (def. frame de SimCore)")
     p.add_argument("--perfil", default=PERFIL_DEFECTO, help="perfil de ROIs (def. simcore.json)")
     p.add_argument("--motor", choices=("produccion", "plantilla"), default="produccion",
                    help="produccion = RapidOCR/onnxruntime (def.); plantilla = solo transporte (valores null)")
     p.add_argument("--solo-consola", action="store_true", help="imprime el JSON en vez de publicar (sin broker)")
     args = p.parse_args(argv)
+
+    if args.listar_dispositivos:
+        from ocr.dispositivos import formatear_tabla, listar_dispositivos
+        try:
+            dispositivos = listar_dispositivos()
+        except RuntimeError as e:
+            print(f"ERROR: {e}")
+            return 1
+        print(formatear_tabla(dispositivos))
+        if not any(d.nodo_captura for d in dispositivos):
+            print("Ningún dispositivo con nodo de captura detectado.")
+            return 1
+        return 0
 
     # Fallos de arranque (imagen/perfil ilegible, capturadora que no abre o
     # entrega otra resolución, motor real no instalado) salen con un mensaje

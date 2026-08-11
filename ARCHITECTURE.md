@@ -217,6 +217,7 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   publicar.py     Puente OCR -> MQTT en bucle (python -m ocr.publicar)
   publicador.py   PublicadorOCR: transporta el contrato por MQTT (cliente inyectado)
   fuente.py       FuenteFrames + FuenteImagenFija + FuenteCapturadora (V4L2 en vivo)
+  dispositivos.py Capturadora por identidad estable (serial/by-id) con fail-hard (ADR-018)
   tiempo.py       ahora_iso(): ts del contrato, compartido lector/publicador
   contrato.py     Construccion del JSON 1.1 (unidades fijas, PNI todo-o-nada)
   perfiles.py     Carga/validacion de perfiles (ROI, signo ausente, campo combinado)

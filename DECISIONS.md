@@ -25,6 +25,7 @@
 | ADR-015 | Perfiles: signo ausente y campos combinados (PNI `SIS/DIA`) | Aceptada |
 | ADR-016 | Motor OCR de producción: PaddleOCR, con entrada cruda al motor | Reemplazada (motor) |
 | ADR-017 | Paddle Inference segfaultea en aarch64: producción pasa a RapidOCR/ONNX Runtime | Aceptada |
+| ADR-018 | Capturadora por identidad estable (serial/by-id) con fail-hard, no por índice | Aceptada |
 
 ---
 
@@ -544,3 +545,79 @@ de ADR-016), pero **fuera de `requirements-motor.txt`** y del CLI. (−) CPU-onl
 ExecutionProvider de GPU/TensorRT queda como optimización futura si el ritmo lo pidiera (a
 1 Hz rec-only sobra; **seguimiento**: medir ms/frame en la Orin en el banco). (−) API de
 RapidOCR fijada por sonda contra la 1.4.4 pinneada; subir de versión exige re-sondear.
+
+---
+
+## ADR-018 — Capturadora por identidad estable (serial/by-id) con fail-hard, no por índice
+
+**Estado:** Aceptada (ago 2026)
+
+**Contexto — el incidente del banco (10 ago 2026).** En el despliegue en vivo se perdió un
+buen rato con "todos los signos en null" por identidad de dispositivo, no por OCR: al
+reconectar hardware, `/dev/video0` pasó a ser **una webcam** y el OCR leyó la webcam (todo
+`null` — el sistema no inventó, pero el operador no sabía por qué); al quitar la webcam, la
+capturadora reapareció en `/dev/video2`, con `/dev/video3` como nodo de metadatos. El índice
+`/dev/videoN` **baila** con el orden de enumeración USB. En un sistema clínico, apuntar al
+índice equivocado puede colgar una cama de **otra fuente** — con `cama_id` como pegamento del
+sistema, es inaceptable.
+
+**Realidad del target (sonda en la Jetson).**
+- `/dev/v4l/by-id/usb-UltraSemi_USB3_Video_35562055-video-index0 → ../../video2` y
+  `-video-index1 → ../../video3`: identidad estable **con serial único** (`35562055`).
+- El nombre de tarjeta sysfs es **idéntico** en ambos nodos ("USB3 Video: USB3 Video"): el
+  nombre NO distingue captura de metadatos → elegir nodo exige capacidades reales.
+- `by-path` disponible (`platform-3610000.usb-usb-0:1.3:1.0`): identifica el puerto físico.
+
+**Decisión** (`ocr/dispositivos.py` + `FuenteCapturadora`):
+1. `--dispositivo` acepta, además de ruta/índice, una **identidad estable**: subcadena
+   (insensible a mayúsculas) del nombre `by-id`, del `by-path` o del nombre de tarjeta —
+   p. ej. el serial `35562055` o el modelo `UltraSemi`.
+2. El **nodo** se elige por capacidades reales (`VIDIOC_QUERYCAP`, `device_caps` con
+   `V4L2_CAP_VIDEO_CAPTURE`), no por la convención `-video-index0`: confirmado en el target
+   que el nombre no distingue, así que la capacidad es el único criterio válido. La
+   validación de modo (MJPG 1920×1080) sigue donde estaba: el primer frame real.
+3. **Fail-hard sin fallback**: identidad ausente → `RuntimeError` accionable (qué se buscó,
+   qué hay, cómo listarlo). **Prohibido caer a `/dev/video0`** — eso fue exactamente leer la
+   webcam. Ambigüedad (≥2 coincidencias) → error pidiendo desambiguar por serial o `by-path`.
+4. **Literales = el usuario manda**: rutas (`/dev/...`) e índices (dígitos de ≤3 caracteres,
+   `0..999` — ningún `/dev/videoN` real pasa de ahí) se abren tal cual, sin resolución. Un
+   dígito-largo (el serial `35562055`) es identidad: interpretarlo como índice abriría "la
+   cámara nº 35562055", un sinsentido silencioso.
+5. **La resolución ocurre una sola vez, al arrancar.** Si el dispositivo se desenumera a
+   mitad de corrida, `frame()` lanza (iteración 5) y el proceso termina; el rearranque
+   re-resuelve en frío. Re-resolver en caliente sería **cambiar de fuente en silencio** —
+   la clase de fallo que este ADR viene a eliminar.
+6. Operativa: `--listar-dispositivos` (tabla con nombre, serial, by-id, by-path y qué nodo
+   es captura vs metadatos) y `ocr/herramientas/sondear_dispositivos.py` como herramienta de
+   campo — el primer paso del diagnóstico "todos null": ¿de verdad lees la capturadora?
+
+**Endurecimiento tras la revisión adversarial.** La revisión encontró (y se cerró con tests)
+que la protección de ambigüedad solo actuaba con ambos dispositivos presentes: con la
+capturadora **ausente** y una webcam genérica conectada, un identificador vago (`usb`,
+`usb3`, `camera`) habría coincidido solo con la webcam y la habría abierto **en silencio** —
+la clase exacta del incidente, sin síntoma en el arranque. Por eso:
+1. **Guardia de especificidad**: identificadores de <5 caracteres o de una lista de términos
+   genéricos (`usb`, `video`, `camera`, `hdmi`, `platform`…) se **rechazan en el arranque**
+   con un error que recomienda el serial. Los apodos cortos se rechazan a propósito.
+2. **Match campo por campo** (by-id, by-path, nombre), nunca sobre campos concatenados: un
+   haystack unido permitía matches que cruzan campos con semántica impredecible.
+3. **Varios nodos de captura en un dispositivo** (capturadora dual-HDMI) → error pidiendo la
+   ruta explícita, no elección silenciosa; y los nodos se ordenan **numéricamente**
+   (`video10` después de `video2` — el orden lexicográfico los invertía).
+4. El parámetro se **normaliza (strip) antes de clasificar**: `" 0"` de un unit file es el
+   índice 0, no una identidad cuya aguja `"0"` coincidiría con casi cualquier by-path.
+
+**Alternativa considerada y descartada.** Una regla udev por Jetson
+(`SYMLINK+="capturadora-cama09"`) es más "unix", pero mueve configuración clínica fuera del
+repo, a cada placa, inauditable desde git. Queda como endurecimiento operativo futuro, no
+como sustituto de la resolución en código.
+
+**Consecuencias.** (+) El identificador recomendado del runbook es el serial (`35562055`);
+reconectar hardware o añadir webcams ya no puede desviar la lectura a otra fuente sin que el
+sistema lo grite. (+) Multi-cama futura: dos capturadoras idénticas se desambiguan por
+`by-path` (puerto físico) — y con el matiz conocido de que dos unidades **sin serial único
+colisionarían en `by-id`** (udev deja un solo symlink), `by-path` es el camino desde ya.
+(+) Solo stdlib (`sysfs` + `ioctl`), sin binarios del sistema ni pip nuevos. (−) La
+resolución por identidad requiere Linux/V4L2 (en dev, error claro y tests con enumeración
+mockeada). (−) El default de `--dispositivo` sigue siendo `/dev/video0` por
+retrocompatibilidad: la práctica recomendada (runbook) es fijar el serial.

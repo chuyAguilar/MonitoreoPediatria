@@ -91,8 +91,32 @@ class FuenteCapturadora(FuenteFrames):
 
     def __init__(self, dispositivo="/dev/video0", ancho=1920, alto=1080,
                  fourcc="MJPG", frames_de_arranque=15, reintentos_lectura=3):
-        if isinstance(dispositivo, str) and dispositivo.isdigit():
+        self._identidad = None
+        if isinstance(dispositivo, str):
+            # Normalizar UNA vez, ANTES de clasificar: sin esto, " 0" (un
+            # espacio de un unit file de systemd) no parece dígito, cae a la
+            # rama de identidad, y la aguja "0" coincidiría por subcadena con
+            # el by-path de casi cualquier dispositivo — otra vía a la clase
+            # del incidente.
+            dispositivo = dispositivo.strip()
+        if isinstance(dispositivo, str) and dispositivo.isdigit() and len(dispositivo) <= 3:
+            # Índice V4L2 literal ("0".."999"): ningún /dev/videoN real pasa de
+            # ahí. Un dígito-largo (p. ej. el serial 35562055) es IDENTIDAD y
+            # cae a la rama del resolutor — interpretarlo como índice abriría
+            # la cámara nº 35562055, un sinsentido silencioso.
             dispositivo = int(dispositivo)  # cv2 acepta índice o ruta /dev/videoN
+        elif isinstance(dispositivo, str) and not dispositivo.startswith("/"):
+            # Identidad ESTABLE (serial, nombre, by-id): se resuelve al nodo de
+            # captura real, y si no está presente LANZA — nunca se cae a un
+            # /dev/videoN cualquiera (ADR-018: así se leyó una webcam en el
+            # banco). Rutas e índices explícitos no pasan por aquí: el usuario
+            # manda. La resolución ocurre UNA vez, al arrancar: si el
+            # dispositivo se desenumera a mitad de corrida, frame() lanza y el
+            # proceso termina — re-resolver en caliente sería cambiar de
+            # fuente en silencio.
+            from ocr.dispositivos import resolver
+            self._identidad = dispositivo
+            dispositivo = resolver(dispositivo)
         self._dispositivo = dispositivo
         self._reintentos = reintentos_lectura
         self._cap = cv2.VideoCapture(dispositivo, cv2.CAP_V4L2)
@@ -157,4 +181,6 @@ class FuenteCapturadora(FuenteFrames):
             cap.release()
 
     def __repr__(self):
+        if self._identidad:
+            return f"FuenteCapturadora({self._identidad!r} -> {self._dispositivo!r})"
         return f"FuenteCapturadora({self._dispositivo!r})"

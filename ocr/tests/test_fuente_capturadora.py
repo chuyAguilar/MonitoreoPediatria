@@ -108,6 +108,204 @@ def test_usa_v4l2_y_acepta_indice_numerico(captura):
     assert captura[0].preferencia == cv2.CAP_V4L2
 
 
+# --------------------------------------------------------------------------
+# Identidad estable (ADR-018): serial/nombre se resuelve al nodo de captura;
+# rutas e índices explícitos NUNCA pasan por el resolutor (el usuario manda).
+# --------------------------------------------------------------------------
+
+
+def test_identidad_estable_se_resuelve_antes_de_abrir(captura, monkeypatch):
+    from ocr import dispositivos
+
+    resueltos = []
+
+    def resolver_falso(identificador):
+        resueltos.append(identificador)
+        return "/dev/video2"
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_falso)
+    fuente = FuenteCapturadora("35562055")
+    assert resueltos == ["35562055"]
+    assert captura[0].dispositivo == "/dev/video2"   # abre el nodo RESUELTO
+    # la trazabilidad para el operador: identidad -> nodo
+    assert "35562055" in repr(fuente) and "/dev/video2" in repr(fuente)
+
+
+@pytest.mark.parametrize("literal", ["/dev/video0", "/dev/v4l/by-id/usb-x-video-index0", "2", "999"])
+def test_ruta_o_indice_literal_no_pasa_por_el_resolutor(captura, monkeypatch, literal):
+    from ocr import dispositivos
+
+    def resolver_prohibido(identificador):
+        raise AssertionError("un literal no debe resolverse")
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_prohibido)
+    FuenteCapturadora(literal)                       # no lanza: no resolvió
+
+
+def test_serial_numerico_largo_es_identidad_no_indice(captura, monkeypatch):
+    """"35562055" (el serial real) debe resolverse, no abrir la cámara nº 35562055.
+
+    La frontera es determinista: dígitos de <=3 caracteres = índice V4L2
+    ("0".."999", ningún /dev/videoN real pasa de ahí); más largos = identidad.
+    """
+    from ocr import dispositivos
+
+    monkeypatch.setattr(dispositivos, "resolver", lambda ident: "/dev/video2")
+    FuenteCapturadora("35562055")
+    assert captura[0].dispositivo == "/dev/video2"   # resolvió, no índice gigante
+
+
+def test_frontera_1000_es_identidad(captura, monkeypatch):
+    """El OTRO lado de la frontera: "1000" (4 dígitos) va al resolutor.
+
+    Fija la frontera por ambos lados: una regresión a `len <= 4` dejaría este
+    test en rojo (abriría el índice 1000 sin resolver)."""
+    from ocr import dispositivos
+
+    resueltos = []
+
+    def resolver_espia(identificador):
+        resueltos.append(identificador)
+        return "/dev/video2"
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_espia)
+    FuenteCapturadora("1000")
+    assert resueltos == ["1000"]                     # identidad, no índice
+
+
+def test_whitespace_no_convierte_un_indice_en_identidad(captura, monkeypatch):
+    """" 0" (un espacio de un unit file) es el índice 0, no una identidad.
+
+    Sin el strip previo a la clasificación, " 0" caía a la rama de identidad y
+    la aguja "0" coincidiría por subcadena con el by-path de casi cualquier
+    dispositivo — otra vía a abrir la fuente equivocada en silencio."""
+    from ocr import dispositivos
+
+    def resolver_prohibido(identificador):
+        raise AssertionError("un índice con espacios no debe resolverse")
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_prohibido)
+    FuenteCapturadora(" 0")
+    assert captura[0].dispositivo == 0
+
+
+def test_whitespace_alrededor_de_ruta_se_normaliza(captura, monkeypatch):
+    from ocr import dispositivos
+
+    def resolver_prohibido(identificador):
+        raise AssertionError("una ruta con espacios no debe resolverse")
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_prohibido)
+    FuenteCapturadora(" /dev/video2 ")
+    assert captura[0].dispositivo == "/dev/video2"
+
+
+def test_whitespace_alrededor_de_identidad_se_normaliza(captura, monkeypatch):
+    from ocr import dispositivos
+
+    resueltos = []
+    monkeypatch.setattr(dispositivos, "resolver",
+                        lambda ident: resueltos.append(ident) or "/dev/video2")
+    FuenteCapturadora(" 35562055 ")
+    assert resueltos == ["35562055"]                 # llega ya sin espacios
+
+
+def test_identidad_ausente_no_abre_ninguna_fuente(captura, monkeypatch):
+    """Regresión del incidente: sin la identidad pedida, NADA se abre."""
+    from ocr import dispositivos
+
+    def resolver_fallido(identificador):
+        raise RuntimeError(f"No hay ningún dispositivo que coincida con {identificador!r}")
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_fallido)
+    with pytest.raises(RuntimeError, match="Elgato"):
+        FuenteCapturadora("Elgato")
+    assert captura == []                             # ningún VideoCapture creado
+
+
+def test_cli_identidad_ausente_sale_limpio(monkeypatch, capsys):
+    from ocr import dispositivos, publicar
+
+    def resolver_fallido(identificador):
+        raise RuntimeError(f"No hay ningún dispositivo que coincida con {identificador!r}. "
+                           f"Usa --listar-dispositivos.")
+
+    monkeypatch.setattr(dispositivos, "resolver", resolver_fallido)
+    codigo = publicar.main(["--fuente", "capturadora", "--dispositivo", "Elgato",
+                            "--motor", "plantilla", "--solo-consola"])
+    assert codigo == 1
+    salida = capsys.readouterr().out
+    assert "Elgato" in salida and "listar-dispositivos" in salida
+
+
+def test_cli_listar_dispositivos(monkeypatch, capsys):
+    from ocr import publicar
+    from ocr.dispositivos import DispositivoCaptura
+
+    detectado = DispositivoCaptura(
+        nombre="USB3 Video: USB3 Video",
+        by_id="usb-UltraSemi_USB3_Video_35562055",
+        by_path="platform-3610000.usb-usb-0:1.3:1.0",
+        serial="35562055",
+        nodos=(("/dev/video2", 0x1), ("/dev/video3", 0x800000)),
+        nodos_captura=("/dev/video2",),
+        nodo_captura="/dev/video2",
+    )
+    import ocr.dispositivos as dispositivos
+    monkeypatch.setattr(dispositivos, "listar_dispositivos", lambda: [detectado])
+    assert publicar.main(["--listar-dispositivos"]) == 0
+    salida = capsys.readouterr().out
+    assert "35562055" in salida and "/dev/video2[captura]" in salida
+
+
+def test_cli_listar_corta_antes_de_construir_fuente_o_motor(monkeypatch, capsys):
+    """--listar-dispositivos es el flag de diagnóstico: sale ANTES de construir
+    fuente/perfil/motor — no exige RapidOCR, no resuelve ni abre dispositivo.
+
+    Se invoca con la forma de campo del incidente (--fuente capturadora
+    --dispositivo 35562055 --listar-dispositivos): el listado manda igual."""
+    import ocr.dispositivos as dispositivos
+    from ocr import publicar
+    from ocr.dispositivos import DispositivoCaptura
+
+    def prohibido(*a, **k):
+        raise AssertionError("--listar-dispositivos no debe construir fuente/perfil/motor")
+
+    monkeypatch.setattr(publicar, "FuenteCapturadora", prohibido)
+    monkeypatch.setattr(publicar, "FuenteImagenFija", prohibido)
+    monkeypatch.setattr(publicar, "cargar_perfil", prohibido)
+    monkeypatch.setattr(publicar, "_construir_motor", prohibido)
+    monkeypatch.setattr(publicar, "correr", prohibido)
+
+    detectado = DispositivoCaptura(
+        nombre="USB3 Video: USB3 Video",
+        by_id="usb-UltraSemi_USB3_Video_35562055",
+        by_path="platform-3610000.usb-usb-0:1.3:1.0",
+        serial="35562055",
+        nodos=(("/dev/video2", 0x1), ("/dev/video3", 0x800000)),
+        nodos_captura=("/dev/video2",),
+        nodo_captura="/dev/video2",
+    )
+    monkeypatch.setattr(dispositivos, "listar_dispositivos", lambda: [detectado])
+
+    codigo = publicar.main(["--fuente", "capturadora", "--dispositivo", "35562055",
+                            "--listar-dispositivos"])
+    assert codigo == 0
+    assert "/dev/video2[captura]" in capsys.readouterr().out
+
+
+def test_cli_listar_dispositivos_sin_v4l2(monkeypatch, capsys):
+    from ocr import publicar
+    import ocr.dispositivos as dispositivos
+
+    def listar_roto():
+        raise RuntimeError("La resolución por identidad requiere Linux/V4L2")
+
+    monkeypatch.setattr(dispositivos, "listar_dispositivos", listar_roto)
+    assert publicar.main(["--listar-dispositivos"]) == 1
+    assert "Linux/V4L2" in capsys.readouterr().out
+
+
 def test_descarta_los_frames_de_arranque(captura):
     fuente = FuenteCapturadora("/dev/video0", frames_de_arranque=15)
     # 15 descartados + (grab+read) de la validación de resolución = 17 al abrir
