@@ -66,6 +66,9 @@ Tests:
 python -m pytest ocr/tests -q
 ```
 
+(La suite canónica del repo es `pytest` a secas desde la raíz: el `pytest.ini`
+recoge `ocr/tests` y `video/tests` — el runner de video por cama, ADR-020.)
+
 ## Publicar por MQTT (puente OCR → dashboard)
 
 `python -m ocr.publicar` lee un frame en bucle, lo pasa por `leer_imagen()` y publica el
@@ -180,7 +183,7 @@ en el screenshot — son capturas de momentos distintos).
 6. **Correr y verificar**: el comando de arriba; en el servidor
    `mosquitto_sub -h localhost -t 'monitoreo/#' -v` y la cama en el dashboard, cambiando
    en vivo con SimCore.
-6. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
+7. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
    toca el borde y sale `null` (nunca un dato falso truncado). Con captura en vivo esto
    puede verse como `null` intermitente en valores extremos.
 

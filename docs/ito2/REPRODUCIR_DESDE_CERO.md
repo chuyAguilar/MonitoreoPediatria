@@ -121,7 +121,7 @@ Con esto, los tres servicios del servidor arrancan solos al encender la máquina
 Conéctate: `ssh chuy@100.72.226.69`
 
 ```bash
-sudo apt update && sudo apt install -y python3-venv python3-pip git ffmpeg
+sudo apt update && sudo apt install -y python3-venv python3-pip git ffmpeg v4l-utils
 python3 -m venv ~/orbbec_env
 source ~/orbbec_env/bin/activate
 pip install paho-mqtt opencv-python numpy
@@ -140,6 +140,59 @@ python run.py --camas 4 --camara video0:1 --fps 15 --ancho 320 --alto 240
 - `--camara video0:1`: la webcam `/dev/video0` va a la `cama-01`.
 - `--fps 15 --ancho 320 --alto 240`: baja la carga para webcams genéricas (sube si tu cámara aguanta más).
 - Sin argumentos (`python run.py`) entra en modo interactivo y pregunta todo.
+
+### 2.1 Video por cama con el runner supervisado (edge real / Jetson) — ADR-020
+
+En el edge real el video de una cama NO se transmite con un `ffmpeg` a mano (moría con
+`Broken pipe` al reiniciar MediaMTX y apuntaba a un `/dev/videoN` que baila): se usa el
+runner, que elige la cámara por **identidad estable**, se relanza solo con backoff y
+detecta transmisiones **estancadas** (ffmpeg vivo pero congelado). Sin dependencias pip;
+solo necesita `ffmpeg` instalado y correrse **desde la raíz del repo**:
+
+```bash
+cd ~/MonitoreoPediatria
+
+# 1) Descubrir la identidad de la cámara (nombre, serial, by-id, by-path):
+python -m video.transmitir --listar-dispositivos
+
+# 2) Transmitir la cama (ejemplo real del banco: la webcam Jieli NO tiene
+#    serial -> se elige por su PUERTO físico, fragmento del by-path):
+python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.2
+
+# Perfil bajo para redes flojas:
+python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.2 \
+  --resolucion 640x480 --bitrate 800k
+
+# Depurar formatos de una cámara sin que el relanzador pelee contigo:
+python -m video.transmitir --cama-id cama-09 --dispositivo /dev/video2 --una-vez
+```
+
+**Política de identidad (ADR-020):**
+- Cámara **con serial único** (p. ej. la capturadora `35562055`) → usa el serial: el
+  runner la sigue aunque cambie de puerto USB.
+- Webcam **sin serial** (las Jieli del banco: su by-id no trae serial) → usa el **puerto
+  físico** (fragmento del by-path, p. ej. `usb-0:2.2`) y **etiqueta físicamente el
+  puerto**. Dos webcams idénticas comparten by-id: solo el puerto las distingue.
+- Mantén una tabla puerto↔cama por Jetson (rellénala al instalar):
+
+| Jetson | Puerto (by-path) | Etiqueta física | Cama |
+|---|---|---|---|
+| jetson-01 | `usb-0:2.2` | "CAMA 09" | cama-09 |
+
+En cada (re)lanzamiento el runner imprime el mapeo (`[cama-09] <- by-path ... -> rtsp://...`):
+verifícalo al dar de alta una cama. Si el video de una cama "parpadea" entre dos cámaras,
+hay **dos runners publicando el mismo `cama_id`** — revisa la tabla.
+
+**Notas:** el runner reintenta para siempre si la cámara o la red se caen A MEDIA CORRIDA
+(backoff hasta 30 s; la cama se ve desconectada en el dashboard, que es la verdad) y solo
+se rinde ante un entorno roto (ffmpeg desinstalado o inmatable) o si un nodo literal pasa
+a ser OTRA cámara. Ojo: en el **arranque** una identidad ausente/ambigua o no verificable
+falla fuerte con exit 1 — el reintento indefinido aplica solo a media corrida, cuando ya
+no hay un humano delante (matriz de ADR-020). Ajusta
+`--fps` a lo que la webcam anuncie en MJPG (`v4l2-ctl --list-formats-ext -d /dev/videoN`);
+si pides un framerate que no da, el driver lo cambia en silencio. Detener: Ctrl+C. Como
+servicio systemd (futuro): el runner ya maneja SIGTERM con cierre limpio; basta un unit
+con `Restart=always` cuando se decida dar ese paso.
 
 ---
 

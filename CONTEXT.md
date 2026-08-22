@@ -5,7 +5,7 @@
 > debe respetar cualquier IA/colaborador que toque el código.
 > Complementa [`ARCHITECTURE.md`](ARCHITECTURE.md) (el *qué*) y [`DECISIONS.md`](DECISIONS.md) (el *porqué*).
 
-**Última actualización:** 2026-07-22
+**Última actualización:** 2026-08-21
 
 ---
 
@@ -47,7 +47,9 @@
   - Sin autenticación de usuarios en el dashboard.
   Esto es **aceptable solo para el POC/desarrollo**. Antes de un despliegue hospitalario real
   hay que: auth en MQTT (usuario/contraseña o TLS), TLS en la web, control de acceso al
-  dashboard, y revisar retención/borrado de datos.
+  dashboard, **auth de publicación y lectura en MediaMTX** (hoy cualquier proceso de la
+  tailnet puede publicar o ver el video de cualquier cama; ADR-020), y revisar
+  retención/borrado de datos.
 - **Salud del menor por encima de la función.** Cualquier cambio que pudiera inducir confianza
   indebida en una lectura, ocultar una desconexión, o silenciar una anomalía real, debe evitarse.
 
@@ -96,6 +98,12 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
 `--sin-video`, `--solo-consola`, `--camas N`, `--camara DEV:CAMA`. Detalle en
 `docs/ito2/SIMULADOR.md`.
 
+### Runner de video por cama (edge real)
+
+`python -m video.transmitir --cama-id cama-NN --dispositivo <identidad>` — env
+`RTSP_SERVIDOR` (host de MediaMTX, def. `100.110.157.112`). Sin dependencias pip; requiere
+el binario `ffmpeg`. Detalle en ADR-020 y el runbook.
+
 ---
 
 ## 5. Estado actual / WIP
@@ -142,6 +150,18 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
   problemas de video. **Pendiente del servidor**: aplicar `webrtcAdditionalHosts:
   [100.110.157.112, 192.168.110.4]` en `mediamtx.yml` + restart (la causa raíz del
   "Reconectando…" del 12-ago: MediaMTX anunciaba solo el candidato ICE 127.0.0.1).
+- **Runner de video por cama** (iteración 9, ADR-020): `python -m video.transmitir
+  --cama-id cama-09 --dispositivo <identidad>` reemplaza al ffmpeg manual — x264 baja
+  latencia (sin NVENC: el Orin Nano no trae codificador HW), cámara por identidad estable
+  con **pin físico** en relanzamientos (con serial → by-id; webcam sin serial, como la
+  Jieli del banco → **by-path** + etiquetado de puertos), supervisión de la TRANSMISIÓN
+  (watchdog de progreso: un ffmpeg colgado ≠ video vivo) y relanzamiento con backoff
+  1→30 s (reset tras corrida sana). Reintento indefinido para cámara/red; fatal para
+  entorno roto o nodo literal que cambió de cámara. Env `RTSP_SERVIDOR`. Suite canónica:
+  `pytest` desde la raíz (`pytest.ini` = ocr/tests + video/tests). **Pendiente**:
+  validación en banco (restart de MediaMTX en vivo; estancamiento por corte TCP
+  silencioso — regla iptables del ADR-020, NO "tapar la cámara": una lente cubierta
+  sigue produciendo frames; ambos perfiles).
 - Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton, con y sin la
   webcam conectada a la vez); multi-cama (desambiguo por `by-path`); reconfirmar contra el
   **uMEC12 real** cuando llegue; seguimiento de ms/frame de RapidOCR en la Orin.

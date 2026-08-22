@@ -5,7 +5,7 @@
 > Para el *porqué* de cada decisión ver [`DECISIONS.md`](DECISIONS.md); para reglas de
 > negocio, límites y estado WIP ver [`CONTEXT.md`](CONTEXT.md).
 
-**Última actualización:** 2026-07-22 · **Contrato de datos:** `1.1`
+**Última actualización:** 2026-08-21 · **Contrato de datos:** `1.1`
 
 ---
 
@@ -231,11 +231,17 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   perfiles/       Perfiles de monitor: monitor_mock.json y simcore/ (frame real)
   mock/           Generadores de imagen mock (completo y con PNI combinada)
   tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
+video/          Runner de video por cama (ADR-020): python -m video.transmitir
+  transmisor.py   comando_ffmpeg() (x264 baja latencia validado) + SupervisorTransmision
+                  (watchdog de progreso, pin de identidad fisica, backoff con reset)
+  transmitir.py   CLI (patron ocr.publicar); reusa ocr.dispositivos SOLO por importacion
+  tests/          pytest: sin ffmpeg ni V4L2 (procesos/relojes falsos, camaras enlatadas)
 web/nextapp/    Dashboard Next.js (export estatico). Consume MQTT-WS + WebRTC.
                 Video A DEMANDA (ADR-019): la rejilla es solo datos; el video vivo
                 se conecta al abrir el detalle. /diag.html = diagnostico de video.
 docs/ito1/      Doc e imagenes Hito 1 (video end-to-end)
 docs/ito2/      Doc, contrato de datos, runbook y diagramas Hito 2
+pytest.ini      Suite canonica: `pytest` a secas = ocr/tests + video/tests
 ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 ```
 

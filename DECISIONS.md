@@ -27,6 +27,7 @@
 | ADR-017 | Paddle Inference segfaultea en aarch64: producción pasa a RapidOCR/ONNX Runtime | Aceptada |
 | ADR-018 | Capturadora por identidad estable (serial/by-id) con fail-hard, no por índice | Aceptada |
 | ADR-019 | Dashboard: video a demanda + política de conexión WebRTC (ICE sin internet, gracia) | Aceptada |
+| ADR-020 | Video por cama: runner supervisado con identidad estable (x264 software, watchdog de progreso) | Aceptada |
 
 ---
 
@@ -693,3 +694,128 @@ limpio (y sin `.babelrc`: se eliminó tras verificar que el build con SWC pasa).
 (TURN, exposición de puertos). Hoy remoto = vía Tailscale, que además es lo único compatible
 con CONTEXT §2 ("nada de exponer puertos a internet abierto"). Si algún día se quiere
 internet abierto, será su propia decisión con sus propias implicaciones de seguridad.
+
+---
+
+## ADR-020 — Video por cama: runner supervisado con identidad estable
+
+**Estado:** Aceptada (ago 2026)
+
+**Contexto.** El video de una cama se transmitía con un `ffmpeg` escrito a mano: moría con
+`Broken pipe` cuando MediaMTX reiniciaba (relanzarlo era manual), apuntaba a `/dev/videoN`
+(que baila con el USB — la clase de incidente de ADR-018) y no tenía estructura por
+`cama_id`. La meta (~10 cámaras encendidas todo el día) exige que el stream sobreviva
+reinicios y glitches **sin intervención**.
+
+**Decisión: `python -m video.transmitir`** — runner independiente por cama (como
+`ocr.publicar` lo es del dato; sin lanzador combinado, decisión explícita), paquete
+top-level `video/` sin ninguna dependencia pip (reusa `ocr.dispositivos` **solo por
+importación**; `ffmpeg` es el único binario externo).
+
+1. **Encode x264 software, sin NVENC.** El Orin Nano **no tiene codificador por hardware**
+   (el bloque NVENC se eliminó en Nano; sí conserva decodificador — el matiz importa al
+   leer specs de la familia Orin). `-preset ultrafast -tune zerolatency -g <fps>` (1
+   keyframe/s), CBR con la proporción validada en banco (`2M/2M/1M`; el perfil bajo
+   640×480/800k la conserva), `-input_format mjpeg` (YUYV crudo corrompe buffers por USB),
+   RTSP por TCP. El argv exacto está fijado por test (`test_comando.py`): el comando ES el
+   artefacto validado.
+
+2. **Supervisión de la TRANSMISIÓN, no solo del proceso.** `proc.wait()` solo ve salidas,
+   y hay dos cuelgues reales donde ffmpeg NO sale: el demuxer v4l2 bloqueado en una cámara
+   UVC atascada, y el `send()` TCP bloqueado en una caída silenciosa del camino (half-open:
+   el kernel tarda ~15 min en rendirse). En ambos, el dashboard mostraría un **frame
+   congelado que parece video en vivo** — el equivalente en video de servir un dato viejo
+   como actual (el pecado clínico de este proyecto). Por eso ffmpeg corre con
+   `-progress pipe:1` y un hilo lector renueva una marca de progreso; sin progreso en
+   ~10 s (configurable, ≥ 2 s y finito: `nan`/`inf` desactivarían el watchdog en silencio)
+   → terminate → gracia 3 s → kill → mismo ciclo de reintento. El wait post-kill está
+   **acotado** (10 s): un ffmpeg en estado D (driver v4l2/xhci colgado) no muere ni con
+   SIGKILL, y esperarlo sin tope colgaría al supervisor dentro de su propio camino de
+   kill — ese caso es fatal ruidoso (relanzar abriría otro ffmpeg contra un nodo
+   secuestrado; el remedio es reconectar la cámara o reiniciar, con `dmesg` como pista).
+   Prueba de banco del estancamiento: NO es "tapar la cámara" (una lente cubierta sigue
+   entregando frames negros y el progreso avanza) — es cortar en silencio el camino TCP a
+   MediaMTX a media transmisión (`sudo iptables -A OUTPUT -p tcp --dport 8554 -j DROP`,
+   verificar el derribo+relanzamiento, y retirar la regla con `-D`).
+
+3. **Backoff con reset por corrida sana.** 1, 2, 4, 8, 16, 30 s (tope); una corrida ≥ 30 s
+   resetea el contador. Un restart de MediaMTX a medianoche relanza en 1 s; una cámara
+   ausente no gira en bucle caliente. La salida con código 0 también relanza (stream caído
+   es stream caído). Reintento **indefinido** para cámara/red (decisión explícita): la
+   ausencia de video es visible como verdad en el dashboard (MediaMTX tira el stream), así
+   que perseverar no puede presentar datos falsos; el log repite el motivo en cada intento.
+   Señalización activa de "cama sin video" (p. ej. estado por MQTT) = seguimiento separado.
+
+4. **Matriz arranque estricto / corrida persistente.** En el arranque hay un humano
+   delante: identidad ausente/ambigua, identidad **física no fijable** (el nodo no aparece
+   en la enumeración V4L2 — sin pin, los relanzamientos no podrían verificar la fuente),
+   `ffmpeg` fuera del PATH o flags inválidos fallan fuerte con mensaje accionable
+   (exit 1). A media corrida no lo hay: cámara o red caídas reintentan para siempre.
+   **Entorno roto es fatal siempre** (ffmpeg desaparecido: reintentar no lo arregla;
+   ffmpeg inmatable en estado D: ídem). El primer intento de *transmisión* fallido
+   (MediaMTX aún arrancando tras un power-cycle del rack) NO es fatal: entra al backoff —
+   el rack completo debe auto-sanar. El reset del backoff mide la transmisión **sana**
+   (hasta el último progreso real), no la duración total: una cámara que se congela cada
+   ~25 s no debe girar en caliente porque la detección+matanza inflen la cuenta.
+
+5. **Identidad con pin físico (extiende ADR-018 al relanzamiento automático).** La
+   clasificación identidad/ruta/índice replica las reglas de `FuenteCapturadora`
+   (réplica deliberada: cero ediciones en `ocr/`). ADR-018 prohíbe re-resolver *en
+   caliente*; aquí cada relanzamiento es un arranque nuevo, pero re-resolver una aguja
+   ambigua (nombre, o el by-id de una webcam sin serial) podría cambiar de fuente en
+   silencio. Por eso en la **primera** resolución se fija (pin) la identidad física
+   completa del dispositivo y cada relanzamiento debe resolver **al mismo**:
+   - **Cámara con serial único** (capturadora UltraSemi `35562055`) → pin por `by-id`: el
+     serial identifica la unidad; puede cambiar de puerto USB y se la sigue.
+   - **Webcam sin serial** → pin por `by-path`: el **puerto físico** es la única ancla.
+     Evidencia de la sonda del banco (21-ago-2026): la webcam Jieli reporta
+     `by-id usb-Jieli_Technology_USB_Composite_Device` — sin serial; el token final
+     "Device" es placeholder. La heurística de "serial utilizable" exige: trae dígitos,
+     NO está en la lista de placeholders de fábrica conocidos (`0001`, `01.00.00`,
+     `20200101`… — iSerial idéntico en todas las unidades del modelo, común en UVC
+     baratas), y ningún otro dispositivo enumerado comparte el by-id. Dos webcams
+     idénticas comparten by-id: intercambiarlas solo lo detecta el puerto. Requiere
+     **etiquetado físico de puertos** y la tabla puerto↔cama del runbook.
+   - Identidad que resuelve a OTRO dispositivo físico → **no se lanza**; se espera a la
+     original con backoff (puede volver; el log dice cómo aceptar un cambio intencional:
+     reiniciar el runner re-fija el pin). Enumeración que no confirma el nodo en un
+     relanzamiento → tampoco se lanza (esperar es reintetable; transmitir sin verificar
+     sería el fallback silencioso que este proyecto prohíbe). Nodo **literal** que ahora
+     es otra cámara → **fatal ruidoso**: relanzar transmitiría la cama equivocada. La
+     verificación compara el **atributo fijado** (no recalcula la política: si un clon
+     aparece después de fijar el pin, la original debe seguir coincidiendo).
+   - La heurística es conservadora a propósito: ante la duda se ancla al puerto (más
+     estricto, nunca menos seguro). **Residual documentado**: un placeholder con dígitos
+     fuera de la lista, con UNA sola unidad enchufada al fijar el pin, no es detectable —
+     un clon enchufado después en otro puerto pasaría el pin by-id. Por eso el runbook
+     manda elegir las webcams sin serial por **by-path** (la propia aguja ancla el
+     puerto y un clon en otro puerto ni siquiera coincide con ella).
+
+6. **Supervisión en Python, no systemd ni GStreamer.** systemd con `ExecStart` estático no
+   puede re-resolver identidad ni verificar el pin en cada relanzamiento (relanzaría el
+   ffmpeg apuntando al nodo viejo = el incidente de ADR-018); GStreamer añadiría una
+   dependencia (gst-python en el env aislado de la Jetson) y abandonaría el comando ffmpeg
+   exacto que el banco validó. systemd **compone por encima** como capa futura
+   (`Restart=always` del runner para sobrevivir reboots/OOM): el CLI ya mapea SIGTERM al
+   mismo cierre limpio que Ctrl+C, y el ffmpeg se lanza con `PR_SET_PDEATHSIG` (muere con
+   el runner: sin huérfanos reteniendo `/dev/videoN` con EBUSY). Cierre limpio sin handler
+   de SIGINT: `KeyboardInterrupt` emerge de `wait()`/`sleep` (PEP 475) y el apagado
+   (terminate → gracia → kill) corre en `except`/`finally` — el patrón de
+   `ocr.publicar.correr`, fijado por tests que corren en Windows.
+
+7. **Riesgo residual nombrado: cámara equivocada por misconfig humana.** El `cama_id` es
+   el pegamento datos↔video y solo el operador lo teclea. Mitigaciones de esta iteración:
+   flag obligatorio sin default, formato `cama-NN` validado, y log de mapeo inequívoco
+   (`[cama-09] <- by-path …usb-0:2.2… (/dev/video2) -> rtsp://…/cama-09`) en **cada**
+   (re)lanzamiento. Dos runners publicando al mismo path se manifiestan como video que
+   "parpadea" entre cámaras (síntoma documentado en el runbook). La mitigación de fondo
+   (config declarativa por edge + verificación visual al dar de alta una cama) queda como
+   seguimiento; la **auth de publicación/lectura en MediaMTX** entra a la lista de
+   endurecimiento pre-hospitalario de CONTEXT §2.
+
+**Aceptación** (banco, Dr. Milton): transmitir eligiendo por by-path sin importar el
+`/dev/videoN`; `sudo systemctl restart mediamtx` a media transmisión → reconecta solo;
+estancar la transmisión sin matarla (la regla `iptables … --dport 8554 -j DROP` del punto
+2) → el watchdog derriba y relanza; 720p/2M y 640×480/800k; cámara inexistente → fallo
+accionable. En dev: `pytest` (suite canónica con `pytest.ini`: `ocr/tests` +
+`video/tests`) y `compileall` limpios.
