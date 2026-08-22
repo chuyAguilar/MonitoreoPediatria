@@ -1,0 +1,30 @@
+# Plantilla del servicio de ingesta de vitales (ADR-021). La adapta e
+# instala alfred en el servidor (/etc/systemd/system/vitales-ingest.service).
+#
+# ANTES de enable --now:
+#   1. mkdir -p /home/chuy/datos/monitoreo   (la BD vive FUERA del working
+#      tree de git: un `git clean -fdx` del clon borraria datos de pacientes)
+#   2. venv con paho-mqtt en WorkingDirectory (python3 -m venv venv &&
+#      venv/bin/pip install paho-mqtt)
+#   3. Verificar permisos y esquema:
+#      venv/bin/python -m persistencia.ingerir --bd /home/chuy/datos/monitoreo/vitales.db --solo-esquema
+#
+# UNA sola instancia: el client_id MQTT es fijo (sesion persistente); una
+# corrida manual con el servicio activo produce expulsion mutua en bucle.
+
+[Unit]
+Description=Ingesta de vitales a SQLite (ADR-021)
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+User=chuy
+WorkingDirectory=/home/chuy/apps/monitoreo-pediatrico
+Environment=INGESTA_BD=/home/chuy/datos/monitoreo/vitales.db
+ExecStart=/home/chuy/apps/monitoreo-pediatrico/venv/bin/python -m persistencia.ingerir
+Restart=on-failure
+RestartSec=5
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

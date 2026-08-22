@@ -40,18 +40,20 @@ El signo vital se **lee de la pantalla del monitor con OCR**, no de un protocolo
 | 1 | Video en vivo de extremo a extremo (cámara → servidor → navegador) | ✅ Completo |
 | 2 | Datos del monitor (simulados) + video + web multi-cama | ✅ Completo |
 | 3 (actual) | Captura por video + **OCR en Jetson** → mismo contrato | 🔨 En curso |
-| 4 (futuro) | Persistencia/"caja negra", alarmas por anomalías, respiración con IA | Pendiente |
+| 4 (futuro) | "Caja negra" completa, alarmas por anomalías, respiración con IA — el primer paso (persistencia de vitales a SQLite, ADR-021) ya está hecho | Pendiente |
 
 ## Estructura del repositorio
 
 ```
-capture/      Captura de cámara Femto Bolt (RGB + profundidad) — Hito 1 / futuro
-simulador/    Simulador (legacy): datos MQTT + video webcam. Banco de pruebas de la web.
-ocr/          Lectura de signos por OCR: imagen fija → contrato 1.1 (ver ocr/README.md).
-              Pendiente: capturadora en vivo y publicación MQTT.
-web/nextapp/  Dashboard web (Next.js, export estático)
-docs/ito1/    Documentación e imágenes del Hito 1
-docs/ito2/    Documentación, contrato de datos, runbook y diagramas del Hito 2
+capture/       Captura de cámara Femto Bolt (RGB + profundidad) — Hito 1 / futuro
+simulador/     Simulador (legacy): datos MQTT + video webcam. Banco de pruebas de la web.
+ocr/           Lectura de signos por OCR → contrato 1.1, con captura en vivo (V4L2,
+               identidad estable) y publicación MQTT (python -m ocr.publicar).
+video/         Runner de video por cama (ADR-020): python -m video.transmitir
+persistencia/  Ingesta de vitales a SQLite en el servidor (ADR-021): python -m persistencia.ingerir
+web/nextapp/   Dashboard web (Next.js, export estático)
+docs/ito1/     Documentación e imágenes del Hito 1
+docs/ito2/     Documentación, contrato de datos, runbook y diagramas del Hito 2
 ARCHITECTURE.md · DECISIONS.md · CONTEXT.md   Documentación mínima viable (MVD)
 ```
 

@@ -13,3 +13,11 @@ node_modules/
 .next/
 out/
 .env.local
+
+# Base de datos de vitales (ADR-021): DATOS DE PACIENTES — jamas al repo
+# (el repo es publico, CONTEXT seccion 2). Vive en el servidor, fuera del
+# working tree; data/ es solo para desarrollo local.
+data/
+*.db
+*.db-wal
+*.db-shm

@@ -28,6 +28,7 @@
 | ADR-018 | Capturadora por identidad estable (serial/by-id) con fail-hard, no por índice | Aceptada |
 | ADR-019 | Dashboard: video a demanda + política de conexión WebRTC (ICE sin internet, gracia) | Aceptada |
 | ADR-020 | Video por cama: runner supervisado con identidad estable (x264 software, watchdog de progreso) | Aceptada |
+| ADR-021 | Persistencia de vitales: ingesta MQTT → SQLite (WAL + lotes, esquema ancho + raw, todo-cada-tick) | Aceptada |
 
 ---
 
@@ -819,3 +820,113 @@ estancar la transmisión sin matarla (la regla `iptables … --dport 8554 -j DRO
 2) → el watchdog derriba y relanza; 720p/2M y 640×480/800k; cámara inexistente → fallo
 accionable. En dev: `pytest` (suite canónica con `pytest.ini`: `ocr/tests` +
 `video/tests`) y `compileall` limpios.
+
+---
+
+## ADR-021 — Persistencia de vitales: ingesta MQTT → SQLite
+
+**Estado:** Aceptada (ago 2026)
+
+**Contexto.** Los vitales del contrato 1.1 eran efímeros (retained del broker + web).
+Para histórico/tendencias y como primer paso de la "caja negra", **Dr. Milton decidió
+persistir TODO, cada tick** (el volumen es diminuto para SQLite: ~10 msg/s). El servicio
+corre en el servidor (Celeron, eMMC, RAM apretada) como `vitales-ingest.service`; reparto
+acordado: este repo entrega código + plantilla `.service` + docs, **alfred** despliega,
+Chuy aprueba.
+
+**Decisión: `python -m persistencia.ingerir`** — suscriptor de Mosquitto local
+(`monitoreo/vitales/+`, `monitoreo/estado/+`, QoS 1) que escribe SQLite en lote. Única
+dependencia pip: paho-mqtt; cero contacto con `ocr/` (topics replicados; `ocr.contrato`
+solo se importa en un test de paridad).
+
+1. **Esquema ancho + `raw` BLOB.** Una fila por mensaje, columnas por signo (mapea 1:1 al
+   contrato) + los bytes EXACTOS del payload en `raw` (BLOB: fiel incluso ante basura
+   binaria — un TEXT con `errors='replace'` sería lossy justo cuando la red de seguridad
+   más importa). Columnas de auditoría: `contrato` (versión que escribió la fila),
+   `pni_ts` (el ts REAL de la medición de PNI — semántica clínica de la iteración 1),
+   `topic` (un payload puede afirmar otra `cama_id`; manda la del **payload** — es lo que
+   el contrato firma — con AVISO en el log y ambos rastros en la fila), `retenido` y
+   `malformado` (ver 3 y 4). Tabla `estado` (transiciones online/offline **publicadas** —
+   sin Last Will aguas arriba, un edge muerto de golpe jamás publica offline: los huecos
+   de vitales son la señal de vida real, no esta tabla; `will_set` en el publicador queda
+   como seguimiento upstream). Tabla `eventos_ingesta`: la caja negra registra sus
+   PROPIOS huecos (arranques, descartes por tope con rango temporal) — un hueco debe
+   explicarse EN el histórico, no en un journald que rota. Índices `(cama_id, ts)`;
+   `user_version=1`; creación idempotente al arrancar + `--solo-esquema` como paso de
+   despliegue verificable.
+
+2. **Amable con la eMMC.** WAL + `synchronous=NORMAL`: el commit escribe al `-wal` SIN
+   fsync; el fsync ocurre en el checkpoint (~1000 páginas). Ventana ante corte de energía
+   = commits desde el último checkpoint; ante crash del proceso, WAL no pierde nada
+   commiteado. `busy_timeout=5000`, `journal_size_limit=4MB`. `synchronous`/`busy_timeout`
+   son POR CONEXIÓN (el lector futuro del dashboard debe fijarlos también). Lote: N=100
+   o T=5 s (lo primero); un `executemany` + un commit por vaciado.
+
+3. **Robustez definida con precisión.** Se salta SOLO lo no-JSON / no-objeto / sobre el
+   tope de payload (64 KB; los mensajes del contrato miden <1 KB). Un JSON-objeto con
+   campos rotos SE PERSISTE como fila con esas columnas a NULL + **`malformado=1`** + su
+   `raw` (criterio de aceptación redefinido y aprobado: nada se pierde, todo es
+   auditable). Disciplina DURA de tipos por columna, sin re-validación clínica: `bool` no
+   es int (`true` sería una fc=1 plausible), int solo en 64 bits (10**20 rompería el bind
+   eternamente), float solo finito (`json.loads` acepta NaN/Infinity), `ts` solo str (un
+   epoch en columna TEXT ordena antes que todo texto). Campo AUSENTE → NULL **sin**
+   marca: el simulador publica contrato 1.0 sin `confianza` y es legítimo. Par coherente:
+   valor roto → su confianza también NULL. **Semántica de NULL**: con `malformado=0` es
+   el null del OCR ("no pudo leer", confianza 0.0); con `malformado=1` es forma rota, ver
+   `raw`. **Lote envenenado**: si `executemany` falla, rollback y reintento fila a fila
+   (los errores de bind — Interface/ProgrammingError/OverflowError — descartan SOLO esa
+   fila con log; un OperationalError — disco lleno — conserva la cola entera y reintenta
+   al siguiente tick). Cola con tope 10 000: por encima se descarta lo más viejo con log
+   y evento al sanar — el servicio degrada avisando, jamás revienta `MemoryMax`.
+
+4. **MQTT con sesión persistente.** `clean_session=False` + `client_id` fijo
+   (`ingesta-vitales`): el broker encola los QoS 1 mientras la ingesta está caída — un
+   deploy/restart NO perfora el histórico (coste: duplicados at-least-once, inofensivos
+   en histórico crudo, y cola en el broker: `max_queued_messages` en el runbook). Exige
+   **una sola instancia** (dos client_id iguales se expulsan en bucle). Callbacks ANTES
+   de conectar; subscribe DENTRO de `on_connect` (paho no re-manda SUBSCRIBE solo), que
+   revisa `reason_code`: CONNACK rechazado repetido (auth futura) → exit 1 visible, no
+   "active" sin ingerir. `enable_logger()` (sin él, las reconexiones de paho son
+   invisibles). **Garantía estructural**: TODO `on_message` bajo `except Exception` — en
+   paho v2 una excepción del callback MATA el hilo de red sin reconexión. Retained: se
+   persisten MARCADOS (`retenido=1`; si la ingesta estaba caída al publicarse, esa copia
+   es el único rastro del dato) — llegan en cada (re)suscripción; con sesión persistente,
+   solo cuando la suscripción es nueva. Broker caído = los edges tampoco publican: esos
+   mensajes mueren en el origen, ninguna política de la ingesta los recupera.
+
+5. **Cierre y arranque.** Arranque estricto (matriz de ADR-020): BD no creable, broker
+   TCP-inaccesible o flags inválidos → exit 1 accionable; el boot lo sana systemd
+   (`After=mosquitto`, `Restart=on-failure`). Cierre limpio: SIGTERM→KeyboardInterrupt
+   (handler restaurado al salir); orden: `loop_stop` → vaciado final (protegido de una
+   segunda señal) → close. El lote se retira de la cola SOLO tras el commit: una señal a
+   mitad del vaciado no pierde filas. Ventana de pérdida ante crash DURO (kill -9, OOM,
+   corte de energía): lo encolado sin vaciar, ≤ T×tasa (~50 filas) — cuantificado aquí a
+   propósito; el evento de arranque delimita el hueco.
+
+6. **Privacidad e integridad (límites conocidos).** La BD contiene datos de salud de
+   menores: `.gitignore` (`data/`, `*.db*`) y, en el servidor, **fuera del working tree**
+   (`/home/chuy/datos/monitoreo/` — un `git clean -fdx` del clon borra hasta lo
+   ignorado). Los logs de rechazo llevan topic + tamaño + ≤80 caracteres, jamás el
+   payload completo (journald no es una segunda BD citable en un repo público). El
+   histórico es tan confiable como el broker: con `allow_anonymous`, cualquier nodo de la
+   tailnet puede inyectar filas bien formadas indistinguibles de lecturas reales —
+   ligado al pendiente de auth MQTT (CONTEXT §2); `topic`/`malformado`/`raw` son rastro
+   de auditoría, no defensa. `message_size_limit` en Mosquitto es la única defensa real
+   contra un retained gigante (paho lo bufferea en RAM antes del callback → crash-loop
+   con `MemoryMax`).
+
+7. **Guía canónica de lectura** (para el lector futuro): tendencias y conteos con
+   `retenido=0 AND malformado=0`; duplicados exactos posibles (QoS 1 at-least-once) — NO
+   añadir UNIQUE(cama_id, ts): descartaría en silencio lecturas legítimas. Los
+   `retenido=1` rellenan huecos y delatan reconexiones.
+
+**Futuro (fuera de v1, anotado a propósito):** retención/pruning (los vitales son
+diminutos; la política la fijará la "caja negra"), **backup** (la eMMC es hoy la única
+copia), lectura desde el dashboard/tendencias, LWT upstream, auth MQTT.
+
+**Aceptación**: mensaje 1.1 → una fila con valores correctos (incluidos los `null` y PNI
+compuesta); mensaje roto → fila `malformado=1` con `raw`; no-JSON → se salta y el
+servicio sigue; lote vacía por N y por T; WAL activo; SIGTERM vacía el pendiente;
+`sudo systemctl restart mosquitto` a media corrida → re-suscribe y `count(*)` sigue
+creciendo. En dev: `pytest` (suite canónica) y `compileall` limpios. Despliegue (alfred):
+filas visibles con `sqlite3 vitales.db "SELECT count(*), max(ts) FROM vitales;"`.

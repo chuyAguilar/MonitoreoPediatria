@@ -112,7 +112,50 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now dashboard
 ```
 
-Con esto, los tres servicios del servidor arrancan solos al encender la máquina.
+### 1.4 Ingesta de vitales a SQLite — como servicio (ADR-021)
+
+Persiste TODO mensaje de vitales y estado en una BD SQLite del servidor (histórico /
+primer paso de la "caja negra"). Lo despliega **alfred**; Chuy aprueba.
+
+```bash
+# 0) Dependencias del servidor (la Parte 1 solo instala mosquitto)
+sudo apt install -y git python3-venv sqlite3
+
+# 1) Código: clon del repo (o pull) en el directorio de apps
+git clone https://github.com/chuyAguilar/MonitoreoPediatria.git ~/apps/monitoreo-pediatrico
+cd ~/apps/monitoreo-pediatrico
+python3 -m venv venv && venv/bin/pip install paho-mqtt
+
+# 2) La BD vive FUERA del clon (datos de pacientes: un `git clean -fdx`
+#    borraría hasta lo ignorado). Crear el directorio y verificar el esquema:
+mkdir -p ~/datos/monitoreo
+venv/bin/python -m persistencia.ingerir --bd ~/datos/monitoreo/vitales.db --solo-esquema
+
+# 3) Defensa del broker (única real contra un retained gigante) y cola de la
+#    sesión persistente de la ingesta, en /etc/mosquitto/conf.d/monitoreo.conf:
+#      message_size_limit 65536      # (en Mosquitto 2.x: max_packet_size)
+#      max_queued_messages 5000     # ~8 min de ingesta caída a ~10 msg/s:
+#                                   # una caída más larga pierde mensajes EN
+#                                   # el broker, sin rastro en eventos_ingesta
+sudo systemctl restart mosquitto
+
+# 4) Instalar el servicio (plantilla en persistencia/vitales-ingest.service):
+sudo cp persistencia/vitales-ingest.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vitales-ingest
+
+# 5) Verificar: filas creciendo mientras el simulador/OCR publica
+sqlite3 ~/datos/monitoreo/vitales.db "SELECT count(*), max(ts) FROM vitales;"
+# y la reconexión: sudo systemctl restart mosquitto -> count(*) sigue creciendo
+```
+
+**Reglas de operación**: UNA sola instancia (el client_id MQTT es fijo con sesión
+persistente: una corrida manual con el servicio activo produce expulsión mutua en bucle —
+si la ingesta reconecta sin parar, ese es el síntoma). Los huecos del propio servicio
+quedan registrados en la tabla `eventos_ingesta`. Guía de lectura del histórico:
+tendencias y conteos con `WHERE retenido=0 AND malformado=0` (ADR-021).
+
+Con esto, los cuatro servicios del servidor arrancan solos al encender la máquina.
 
 ---
 
@@ -230,7 +273,7 @@ El servicio `dashboard` sirve esos archivos al instante (no hay que reiniciarlo)
 
 ## Orden de arranque
 
-1. **Servidor**: los servicios (`mosquitto`, `mediamtx`, `dashboard`) arrancan solos al encender. Verifica: `systemctl status mosquitto mediamtx dashboard --no-pager`.
+1. **Servidor**: los servicios (`mosquitto`, `mediamtx`, `dashboard`, `vitales-ingest`) arrancan solos al encender. Verifica: `systemctl status mosquitto mediamtx dashboard vitales-ingest --no-pager`.
 2. **Edge**: conecta la webcam y lanza el simulador (Parte 2).
 3. **Mando**: abre `http://100.110.157.112:8080`.
 

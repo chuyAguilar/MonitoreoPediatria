@@ -5,7 +5,7 @@
 > Para el *porqué* de cada decisión ver [`DECISIONS.md`](DECISIONS.md); para reglas de
 > negocio, límites y estado WIP ver [`CONTEXT.md`](CONTEXT.md).
 
-**Última actualización:** 2026-08-21 · **Contrato de datos:** `1.1`
+**Última actualización:** 2026-08-22 · **Contrato de datos:** `1.1`
 
 ---
 
@@ -231,6 +231,12 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   perfiles/       Perfiles de monitor: monitor_mock.json y simcore/ (frame real)
   mock/           Generadores de imagen mock (completo y con PNI combinada)
   tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
+persistencia/   Ingesta de vitales a SQLite (ADR-021): python -m persistencia.ingerir
+  almacen.py      Esquema (ancho + raw BLOB + auditoria) + AlmacenVitales (WAL, lotes)
+  ingestor.py     Parseo puro del contrato + ServicioIngesta + suscriptor MQTT
+  ingerir.py      CLI (corre EN el servidor como vitales-ingest.service)
+  vitales-ingest.service  Plantilla systemd (la adapta alfred)
+  tests/          pytest: sin broker ni disco (SQLite :memory:; WAL en tmp_path)
 video/          Runner de video por cama (ADR-020): python -m video.transmitir
   transmisor.py   comando_ffmpeg() (x264 baja latencia validado) + SupervisorTransmision
                   (watchdog de progreso, pin de identidad fisica, backoff con reset)
@@ -241,7 +247,7 @@ web/nextapp/    Dashboard Next.js (export estatico). Consume MQTT-WS + WebRTC.
                 se conecta al abrir el detalle. /diag.html = diagnostico de video.
 docs/ito1/      Doc e imagenes Hito 1 (video end-to-end)
 docs/ito2/      Doc, contrato de datos, runbook y diagramas Hito 2
-pytest.ini      Suite canonica: `pytest` a secas = ocr/tests + video/tests
+pytest.ini      Suite canonica: `pytest` a secas = ocr/tests + video/tests + persistencia/tests
 ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 ```
 
@@ -262,5 +268,6 @@ ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 - **Reemplazado como fuente de dato en producción:** el simulador digital y el adaptador
   HL7/PDS pasan a segundo plano; la fuente ahora es capturadora + OCR. El simulador
   **se conserva** como banco de pruebas de la web.
-- **Futuro (no implementado):** respiración por cámara de profundidad + IA, persistencia
-  "caja negra", lógica de alarmas por anomalías. Ver `CONTEXT.md` §Estado / WIP.
+- **Futuro (no implementado):** respiración por cámara de profundidad + IA, "caja negra"
+  completa (video, retención, backup — el primer paso, la persistencia de vitales a
+  SQLite, ya existe: ADR-021), lógica de alarmas por anomalías. Ver `CONTEXT.md` §Estado / WIP.

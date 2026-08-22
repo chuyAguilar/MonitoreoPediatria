@@ -5,7 +5,7 @@
 > debe respetar cualquier IA/colaborador que toque el código.
 > Complementa [`ARCHITECTURE.md`](ARCHITECTURE.md) (el *qué*) y [`DECISIONS.md`](DECISIONS.md) (el *porqué*).
 
-**Última actualización:** 2026-08-21
+**Última actualización:** 2026-08-22
 
 ---
 
@@ -41,6 +41,9 @@
 - **Repositorio sin datos de pacientes.** El repo Git es público (`github.com/chuyAguilar/MonitoreoPediatria`).
   **Nunca** commitear: datos reales de pacientes, video/imágenes de pacientes, IPs privadas
   sensibles fuera de las ya documentadas, credenciales, ni `.env.local` con secretos.
+  La **BD de vitales** (ADR-021) es datos de pacientes: está en `.gitignore` (`data/`,
+  `*.db*`) y en el servidor vive **fuera del working tree** de git (un `git clean -fdx`
+  borra hasta lo ignorado). Los logs de la ingesta jamás vuelcan payloads completos.
 - **Estado actual = desarrollo, no endurecido.** Hoy:
   - Mosquitto con `allow_anonymous true` (sin auth).
   - Web servida por `http` (no `https`) dentro de la tailnet.
@@ -49,7 +52,9 @@
   hay que: auth en MQTT (usuario/contraseña o TLS), TLS en la web, control de acceso al
   dashboard, **auth de publicación y lectura en MediaMTX** (hoy cualquier proceso de la
   tailnet puede publicar o ver el video de cualquier cama; ADR-020), y revisar
-  retención/borrado de datos.
+  retención/borrado de datos. Nota (ADR-021): el histórico de vitales es tan confiable
+  como el broker — con `allow_anonymous`, cualquier nodo puede inyectar filas; la auth
+  de MQTT también protege la integridad de la "caja negra".
 - **Salud del menor por encima de la función.** Cualquier cambio que pudiera inducir confianza
   indebida en una lectura, ocultar una desconexión, o silenciar una anomalía real, debe evitarse.
 
@@ -103,6 +108,20 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
 `python -m video.transmitir --cama-id cama-NN --dispositivo <identidad>` — env
 `RTSP_SERVIDOR` (host de MediaMTX, def. `100.110.157.112`). Sin dependencias pip; requiere
 el binario `ffmpeg`. Detalle en ADR-020 y el runbook.
+
+### Ingesta de vitales a SQLite (servidor)
+
+`python -m persistencia.ingerir` (servicio `vitales-ingest`). Envs, leídos al ejecutar:
+
+| Variable | Default | Qué controla |
+|---|---|---|
+| `INGESTA_BROKER` | `localhost` | broker MQTT (la ingesta corre EN el servidor) |
+| `INGESTA_PUERTO` | `1883` | puerto del broker |
+| `INGESTA_BD` | `data/vitales.db` | ruta SQLite (en el servidor: RUTA ABSOLUTA fuera del clon) |
+| `INGESTA_LOTE` | `100` | N mensajes que fuerzan el vaciado |
+| `INGESTA_INTERVALO` | `5.0` | T segundos entre vaciados |
+
+Detalle en ADR-021 y el runbook §1.4.
 
 ---
 
@@ -158,10 +177,22 @@ el binario `ffmpeg`. Detalle en ADR-020 y el runbook.
   (watchdog de progreso: un ffmpeg colgado ≠ video vivo) y relanzamiento con backoff
   1→30 s (reset tras corrida sana). Reintento indefinido para cámara/red; fatal para
   entorno roto o nodo literal que cambió de cámara. Env `RTSP_SERVIDOR`. Suite canónica:
-  `pytest` desde la raíz (`pytest.ini` = ocr/tests + video/tests). **Pendiente**:
-  validación en banco (restart de MediaMTX en vivo; estancamiento por corte TCP
-  silencioso — regla iptables del ADR-020, NO "tapar la cámara": una lente cubierta
-  sigue produciendo frames; ambos perfiles).
+  `pytest` desde la raíz (`pytest.ini` = ocr/tests + video/tests + persistencia/tests).
+  **Pendiente**: validación en banco (restart de MediaMTX en vivo; estancamiento por
+  corte TCP silencioso — regla iptables del ADR-020, NO "tapar la cámara": una lente
+  cubierta sigue produciendo frames; ambos perfiles).
+- **Persistencia de vitales** (iteración 10, ADR-021): `python -m persistencia.ingerir`
+  se suscribe a Mosquitto local y persiste TODO mensaje (cada tick, decisión de
+  Dr. Milton) en SQLite — esquema ancho + `raw` BLOB, columnas de auditoría
+  (`topic`/`retenido`/`malformado`), tablas `estado` y `eventos_ingesta` (la caja negra
+  registra sus propios huecos). WAL + lotes N=100/T=5 s (eMMC), sesión persistente MQTT
+  (`clean_session=False`: un deploy no perfora el histórico; UNA sola instancia),
+  disciplina dura de tipos sin re-validación clínica, lote envenenado aislado fila a
+  fila, cierre limpio que vacía el pendiente. Guía de lectura: tendencias con
+  `retenido=0 AND malformado=0`. **Pendiente**: despliegue por alfred (plantilla
+  `persistencia/vitales-ingest.service`; BD en `/home/chuy/datos/monitoreo/`, fuera del
+  clon; `message_size_limit` y `max_queued_messages` en Mosquitto) y verificación en el
+  servidor.
 - Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton, con y sin la
   webcam conectada a la vez); multi-cama (desambiguo por `by-path`); reconfirmar contra el
   **uMEC12 real** cuando llegue; seguimiento de ms/frame de RapidOCR en la Orin.
@@ -171,7 +202,8 @@ el binario `ffmpeg`. Detalle en ADR-020 y el runbook.
 
 **Pendiente / futuro (no empezado):**
 - Autenticación (MQTT + web) y TLS para despliegue real (ver §2).
-- Persistencia + "caja negra" (log/almacenamiento auditable).
+- "Caja negra" completa (grabación de video, retención/pruning, backup). El primer paso —
+  la persistencia de vitales a SQLite — ya está implementado (iteración 10, ADR-021).
 - Lógica de alarmas por anomalías (con criterio anti-fatiga).
 - Respiración por cámara de profundidad (Femto Bolt) + IA.
 - `git push` de la migración Next.js + simulador + docs ito2 si sigue pendiente.
