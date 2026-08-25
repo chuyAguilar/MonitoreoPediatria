@@ -354,6 +354,34 @@ def test_pin_rechaza_otro_dispositivo_fisico_y_espera_al_original():
     assert sup._esperas_registradas == [1, 2]
 
 
+def test_relanzamiento_con_symlinks_de_udev_tardios_espera_no_mata():
+    # Race de udev: el nodo reaparece antes que sus symlinks -> el dispositivo
+    # enumera con by_id/by_path vacíos. Eso es "no verificable" (espera), no
+    # "otra cámara" (fatal) — incluso con nodo literal.
+    import dataclasses
+
+    a_medio_enumerar = dataclasses.replace(JIELI, by_id="", by_path="", serial="")
+    for dispositivo in ("usb-0:2.2", "/dev/video2"):
+        reloj = RelojFalso()
+        fisicos = iter([JIELI, a_medio_enumerar, JIELI])
+        argvs = []
+
+        def lanzar(argv, con_progreso):
+            argvs.append(argv)
+            if len(argvs) == 2:
+                raise KeyboardInterrupt
+            return ProcesoFalso(codigo=1, ticks_vivo=0, reloj=reloj)
+
+        sup = _supervisor(
+            reloj, lanzar,
+            dispositivo=dispositivo,
+            identidad_de=lambda nodo: next(fisicos),
+        )
+        sup.correr()  # no debe lanzar TransmisionFatal
+        assert len(argvs) == 2, f"con dispositivo={dispositivo!r}"
+        assert len(sup._esperas_registradas) == 2
+
+
 def test_resolver_falla_a_media_corrida_reintenta():
     reloj = RelojFalso()
     intentos = {"n": 0}

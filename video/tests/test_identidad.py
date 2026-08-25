@@ -124,8 +124,38 @@ def test_pin_by_id_compartido_ancla_al_puerto():
 
 def test_coincide_pin_compara_el_atributo_fijado():
     pin = pin_de(JIELI)  # ('by-path', ...2.2...)
-    assert coincide_pin(pin, JIELI)
-    assert not coincide_pin(pin, JIELI_OTRO_PUERTO)
+    assert coincide_pin(pin, JIELI) is True
+    assert coincide_pin(pin, JIELI_OTRO_PUERTO) is False
     pin_ultra = pin_de(ULTRASEMI)  # ('by-id', ...35562055)
-    assert coincide_pin(pin_ultra, ULTRASEMI)
-    assert not coincide_pin(pin_ultra, JIELI)
+    assert coincide_pin(pin_ultra, ULTRASEMI) is True
+    assert coincide_pin(pin_ultra, JIELI) is False
+
+
+def test_coincide_pin_atributo_vacio_es_no_verificable():
+    # Race de udev: el nodo reaparece ANTES que sus symlinks by-id/by-path.
+    # "No verificable todavía" (None) no es "difiere" (False): tratarlo como
+    # difiere mataría al runner con un fatal falso con la MISMA cámara
+    # volviendo de una re-enumeración.
+    a_medio_enumerar = _webcam(by_id="", by_path="", serial="")
+    assert coincide_pin(pin_de(ULTRASEMI), a_medio_enumerar) is None
+    assert coincide_pin(pin_de(JIELI), a_medio_enumerar) is None
+
+
+def test_es_otro_fisico_desempata_por_nodos_sin_by_path():
+    from video.transmisor import _es_otro_fisico
+
+    # compañero sin by_path y con NODOS distintos -> es otro físico (un clon
+    # con el mismo by-id cuenta como compartido -> pin por puerto)
+    d = _webcam(by_id="usb-Marca_Cam_77AA", by_path="platform-x-usb-0:3.1:1.0",
+                serial="77AA", nodo="/dev/video4")
+    clon_sin_path = _webcam(by_id="usb-Marca_Cam_77AA", by_path="",
+                            serial="77AA", nodo="/dev/video6")
+    assert _es_otro_fisico(clon_sin_path, d)
+    assert pin_de(d, companeros=[clon_sin_path]) == \
+        ("by-path", "platform-x-usb-0:3.1:1.0")
+    # gemelo sin by_path en AMBOS y con los MISMOS nodos -> el mismo físico
+    g1 = _webcam(by_id="usb-Marca_Cam_77AA", by_path="", serial="77AA",
+                 nodo="/dev/video4")
+    g2 = _webcam(by_id="usb-Marca_Cam_77AA", by_path="", serial="77AA",
+                 nodo="/dev/video4")
+    assert not _es_otro_fisico(g2, g1)

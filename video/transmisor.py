@@ -216,6 +216,12 @@ def coincide_pin(pin, dispositivo_captura):
     si una segunda unidad idéntica aparece después de fijar el pin, la
     original debe seguir coincidiendo (recalcular la política la degradaría
     a by-path y el runner dejaría de reconocer a su propia cámara).
+
+    Devuelve None cuando el atributo anclado está VACÍO en el dispositivo:
+    durante una re-enumeración USB el nodo /dev/videoN aparece ANTES de que
+    udev cree los symlinks by-id/by-path — "no verificable todavía" no es
+    "difiere", y tratarlo como difiere mataría al runner con un fatal falso
+    justo cuando la cámara está volviendo. El llamador espera y reintenta.
     """
     clave, valor = pin
     actual = {
@@ -223,6 +229,8 @@ def coincide_pin(pin, dispositivo_captura):
         "by-path": dispositivo_captura.by_path,
         "nombre": dispositivo_captura.nombre,
     }[clave]
+    if not actual:
+        return None
     return actual == valor
 
 
@@ -381,7 +389,17 @@ class SupervisorTransmision:
                 f"aparece en la enumeración V4L2; ¿re-enumeración USB en "
                 f"curso?); esperando"
             )
-        if not coincide_pin(self._pin, disp):
+        veredicto = coincide_pin(self._pin, disp)
+        if veredicto is None:
+            # Mismo trato que disp None: la enumeración aún no está completa
+            # (udev crea los symlinks después del nodo) — reintetable, no
+            # fatal: es la misma cámara a mitad de re-enumerar.
+            raise RuntimeError(
+                f"el dispositivo en {nodo} aún no expone su {self._pin[0]} "
+                f"(¿re-enumeración USB en curso?); esperando para verificar "
+                f"el pin"
+            )
+        if not veredicto:
             encontrado = pin_de(disp)
             if self._clase == "literal":
                 # La clase exacta del incidente de ADR-018: el índice se
