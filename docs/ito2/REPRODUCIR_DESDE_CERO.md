@@ -211,8 +211,10 @@ python -m video.transmitir --cama-id cama-09 --dispositivo /dev/video2 --una-vez
 ```
 
 **Política de identidad (ADR-020):**
-- Cámara **con serial único** (p. ej. la capturadora `35562055`) → usa el serial: el
-  runner la sigue aunque cambie de puerto USB.
+- Cámara **con serial único** (p. ej. la capturadora `35562055`, o la WebCamera del
+  banco `251735124`) → usa el serial: el runner la sigue aunque cambie de puerto USB,
+  y su pin queda anclado al by-id (verificado en banco tras corregir la guarda de
+  by-id compartido, que comparaba por identidad de objeto y anclaba al puerto).
 - Webcam **sin serial** (las Jieli del banco: su by-id no trae serial) → usa el **puerto
   físico** (fragmento del by-path, p. ej. `usb-0:2.2`) y **etiqueta físicamente el
   puerto**. Dos webcams idénticas comparten by-id: solo el puerto las distingue.

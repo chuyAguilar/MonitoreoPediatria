@@ -182,7 +182,14 @@ def pin_de(dispositivo_captura, companeros=()):
         d.by_id
         and any(c.isdigit() for c in d.serial)
         and d.serial.lower() not in _SERIALES_PLACEHOLDER
-        and not any(o.by_id == d.by_id for o in companeros if o is not d)
+        # "Compartido" = otro dispositivo FÍSICO con el mismo by-id. La
+        # comparación es POR VALOR, no por identidad de objeto: companeros
+        # viene de una enumeración fresca, así que el gemelo del propio
+        # dispositivo es OTRO objeto (`o is not d` era True y todo serial
+        # único caía a by-path — el incidente del banco con el serial
+        # 251735124). El puerto físico (by_path) identifica al dispositivo.
+        and not any(o.by_id == d.by_id for o in companeros
+                    if _es_otro_fisico(o, d))
     )
     if serial_utilizable:
         return ("by-id", d.by_id)
@@ -191,6 +198,15 @@ def pin_de(dispositivo_captura, companeros=()):
     if d.by_id:
         return ("by-id", d.by_id)
     return ("nombre", d.nombre)
+
+
+def _es_otro_fisico(o, d):
+    """¿`o` es un dispositivo físico DISTINTO de `d`? Por valor: el mismo
+    dispositivo enumerado dos veces produce objetos distintos con el mismo
+    puerto. Sin by-path (raro), desempatan los nodos."""
+    if o.by_path and d.by_path:
+        return o.by_path != d.by_path
+    return o.nodos != d.nodos
 
 
 def coincide_pin(pin, dispositivo_captura):

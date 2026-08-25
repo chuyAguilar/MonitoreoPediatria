@@ -95,6 +95,21 @@ def test_pin_serial_placeholder_con_digitos_ancla_al_puerto():
         assert pin_de(d) == ("by-path", "platform-x-usb-0:3.1:1.0"), placeholder
 
 
+def test_pin_serial_unico_con_gemelo_de_otra_enumeracion():
+    # Regresión del incidente del banco (serial 251735124 fijado por by-path):
+    # companeros viene de una enumeración FRESCA, así que el gemelo del propio
+    # dispositivo es OTRO objeto con los mismos valores. La guarda de "by-id
+    # compartido" debe comparar por VALOR (puerto físico), no por identidad de
+    # objeto — con `o is not d`, todo serial único caía a by-path.
+    d = _webcam(by_id="usb-WebCamera_251735124",
+                by_path="platform-x-usb-0:3.3:1.0", serial="251735124")
+    gemelo = _webcam(by_id="usb-WebCamera_251735124",
+                     by_path="platform-x-usb-0:3.3:1.0", serial="251735124")
+    assert gemelo is not d
+    assert pin_de(d, companeros=[gemelo, ULTRASEMI]) == \
+        ("by-id", "usb-WebCamera_251735124")
+
+
 def test_pin_by_id_compartido_ancla_al_puerto():
     # Dos unidades enumeradas con el MISMO by-id (serial no único aunque
     # traiga dígitos raros fuera de la lista): anclar al puerto.

@@ -774,7 +774,12 @@ importación**; `ffmpeg` es el único binario externo).
      "Device" es placeholder. La heurística de "serial utilizable" exige: trae dígitos,
      NO está en la lista de placeholders de fábrica conocidos (`0001`, `01.00.00`,
      `20200101`… — iSerial idéntico en todas las unidades del modelo, común en UVC
-     baratas), y ningún otro dispositivo enumerado comparte el by-id. Dos webcams
+     baratas), y ningún otro dispositivo **físico** enumerado comparte el by-id — la
+     comparación es por VALOR (puerto físico distinto), no por identidad de objeto: los
+     `companeros` vienen de una enumeración fresca y el gemelo del propio dispositivo es
+     otro objeto (corregido tras el incidente del banco: la WebCamera con serial único
+     `251735124` caía a by-path porque su propio gemelo contaba como "compartido"). Con
+     serial único real, el pin es by-id y sigue a la unidad entre puertos. Dos webcams
      idénticas comparten by-id: intercambiarlas solo lo detecta el puerto. Requiere
      **etiquetado físico de puertos** y la tabla puerto↔cama del runbook.
    - Identidad que resuelve a OTRO dispositivo físico → **no se lanza**; se espera a la
