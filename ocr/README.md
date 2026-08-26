@@ -182,7 +182,15 @@ en el screenshot — son capturas de momentos distintos).
    webcam conectada o un cambio de puerto no desvían la lectura a otra fuente (ADR-018).
 6. **Correr y verificar**: el comando de arriba; en el servidor
    `mosquitto_sub -h localhost -t 'monitoreo/#' -v` y la cama en el dashboard, cambiando
-   en vivo con SimCore.
+   en vivo con SimCore. **Last Will (ADR-022)**: matar el proceso SIN Ctrl+C
+   (`kill -9 <pid>`) → el broker publica solo el `offline` retenido en
+   `monitoreo/estado/<cama>` (visible en el mosquitto_sub; y como fila en la tabla
+   `estado` de la BD cuando la ingesta de ADR-021 ya corra en el servidor — hoy
+   pendiente de despliegue); al relanzar, el `online` reaparece. Con corte de energía
+   o cable, el `offline` tarda ~22 s (keepalive de 15 s). OJO: NO lances dos
+   publicadores de la misma cama — comparten client_id y el broker los expulsa
+   mutuamente (takeover), publicando el will del expulsado: flapping offline/online
+   (el runner lo delata con "desconexiones inmediatas repetidas").
 7. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
    toca el borde y sale `null` (nunca un dato falso truncado). Con captura en vivo esto
    puede verse como `null` intermitente en valores extremos.

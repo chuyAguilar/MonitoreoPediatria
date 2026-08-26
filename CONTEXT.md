@@ -193,6 +193,16 @@ Detalle en ADR-021 y el runbook §1.4.
   `persistencia/vitales-ingest.service`; BD en `/home/chuy/datos/monitoreo/`, fuera del
   clon; `message_size_limit` y `max_queued_messages` en Mosquitto) y verificación en el
   servidor.
+- **Last Will del OCR** (iteración 11, ADR-022): el broker publica el `offline`
+  retenido si el edge muere de golpe (kill -9/crash → inmediato; corte de energía →
+  ~22 s con `KEEPALIVE_S=15`); `cerrar()→offline` se conserva para el apagado limpio
+  (y desarma `on_connect` antes de cortar), y `on_connect` re-publica `online` en cada
+  reconexión (sin eso, un blip de red dejaría la cama viva marcada muerta para
+  siempre). El ts del will es el del PRIMER connect — el arranque del runner (caveat
+  en el ADR: para razonar tiempos, `recibido_en` de la BD). El simulador queda fuera
+  (un cliente para N camas = un solo will posible). Dos publicadores de la misma cama
+  = takeover mutuo con flapping (avisado en el log). **Pendiente**: validación en
+  banco (`kill -9` + `mosquitto_sub`).
 - Después: **corrida en vivo end-to-end en el banco** (la valida Dr. Milton, con y sin la
   webcam conectada a la vez); multi-cama (desambiguo por `by-path`); reconfirmar contra el
   **uMEC12 real** cuando llegue; seguimiento de ms/frame de RapidOCR en la Orin.

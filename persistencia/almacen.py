@@ -14,6 +14,11 @@ Columnas de auditoría por fila:
   int fuera de 64 bits, float no finito) y fue a NULL. Distingue el NULL-por-
   basura del null-del-OCR, que es semántica clínica real ("no pudo leer").
   Guía de lectura: tendencias/conteos con `retenido=0 AND malformado=0`.
+  OJO con la tabla `estado`: `online` significa sesión MQTT viva (con LWT,
+  ADR-022), NO lectura clínica fresca — un pipeline OCR colgado con proceso
+  vivo mantiene el keepalive y el online retenido durante horas. La liveness
+  clínica se deriva del FLUJO de vitales (huecos por `recibido_en` con
+  `retenido=0`), jamás de la tabla `estado` sola.
 
 La tabla `eventos_ingesta` registra los huecos del PROPIO servicio (arranques,
 descartes por tope): los huecos de una caja negra deben explicarse EN el

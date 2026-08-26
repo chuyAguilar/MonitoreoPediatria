@@ -29,6 +29,7 @@
 | ADR-019 | Dashboard: video a demanda + política de conexión WebRTC (ICE sin internet, gracia) | Aceptada |
 | ADR-020 | Video por cama: runner supervisado con identidad estable (x264 software, watchdog de progreso) | Aceptada |
 | ADR-021 | Persistencia de vitales: ingesta MQTT → SQLite (WAL + lotes, esquema ancho + raw, todo-cada-tick) | Aceptada |
+| ADR-022 | Last Will (LWT) en el cliente MQTT del OCR: estado honesto ante muerte súbita del edge | Aceptada |
 
 ---
 
@@ -851,10 +852,11 @@ solo se importa en un test de paridad).
    `pni_ts` (el ts REAL de la medición de PNI — semántica clínica de la iteración 1),
    `topic` (un payload puede afirmar otra `cama_id`; manda la del **payload** — es lo que
    el contrato firma — con AVISO en el log y ambos rastros en la fila), `retenido` y
-   `malformado` (ver 3 y 4). Tabla `estado` (transiciones online/offline **publicadas** —
-   sin Last Will aguas arriba, un edge muerto de golpe jamás publica offline: los huecos
-   de vitales son la señal de vida real, no esta tabla; `will_set` en el publicador queda
-   como seguimiento upstream). Tabla `eventos_ingesta`: la caja negra registra sus
+   `malformado` (ver 3 y 4). Tabla `estado` (transiciones online/offline **publicadas**;
+   desde ADR-022 el broker publica el offline por Last Will ante muerte súbita del edge —
+   quedan como residuales la ventana de keepalive y el pipeline colgado con proceso vivo:
+   los huecos de vitales siguen siendo la señal de vida definitiva). Tabla
+   `eventos_ingesta`: la caja negra registra sus
    PROPIOS huecos (arranques, descartes por tope con rango temporal) — un hueco debe
    explicarse EN el histórico, no en un journald que rota. Índices `(cama_id, ts)`;
    `user_version=1`; creación idempotente al arrancar + `--solo-esquema` como paso de
@@ -927,7 +929,8 @@ solo se importa en un test de paridad).
 
 **Futuro (fuera de v1, anotado a propósito):** retención/pruning (los vitales son
 diminutos; la política la fijará la "caja negra"), **backup** (la eMMC es hoy la única
-copia), lectura desde el dashboard/tendencias, LWT upstream, auth MQTT.
+copia), lectura desde el dashboard/tendencias, auth MQTT. (El LWT upstream ya existe:
+ADR-022.)
 
 **Aceptación**: mensaje 1.1 → una fila con valores correctos (incluidos los `null` y PNI
 compuesta); mensaje roto → fila `malformado=1` con `raw`; no-JSON → se salta y el
@@ -935,3 +938,72 @@ servicio sigue; lote vacía por N y por T; WAL activo; SIGTERM vacía el pendien
 `sudo systemctl restart mosquitto` a media corrida → re-suscribe y `count(*)` sigue
 creciendo. En dev: `pytest` (suite canónica) y `compileall` limpios. Despliegue (alfred):
 filas visibles con `sqlite3 vitales.db "SELECT count(*), max(ts) FROM vitales;"`.
+
+---
+
+## ADR-022 — Last Will (LWT): estado honesto ante muerte súbita del edge
+
+**Estado:** Aceptada (ago 2026)
+
+**Contexto.** El `offline` solo se publicaba en el apagado LIMPIO (`cerrar()`); si la
+Jetson muere de golpe (crash, corte de energía, red), el topic
+`monitoreo/estado/{cama_id}` queda retenido en `online` para siempre y la BD (ADR-021)
+registra un online sin su offline: la cama "viva" cuando ya no lo está.
+
+**Decisión.** `will_set` en el cliente MQTT del OCR: el **broker** publica el offline
+(retained, QoS 1) al detectar una desconexión no limpia. Se conserva `cerrar()→offline`
+(cinturón y tirantes: un disconnect limpio NO dispara el will — verificado en paho 2.1.0,
+el DISCONnect sale síncrono en `disconnect()` tras `loop_stop`).
+
+1. **Payload idéntico por construcción**: `carga_estado()` es el único constructor del
+   payload de estado; lo usan `publicar_estado` y `will_de_estado`. La BD y la web
+   interpretan el offline del will como cualquier otro.
+2. **Caveat del ts** (decisión explícita): el payload del will se construye UNA vez,
+   antes del PRIMER connect (el arranque del runner), y paho re-manda ese payload tal
+   cual en cada reconexión automática — sin refresco (aprobado). Su `ts` NO dice cuándo
+   murió el edge (incognoscible por diseño) ni cuándo fue la última conexión: el
+   consumidor usa el `recibido_en` de la BD y el campo `estado`, nunca el `ts` del will.
+   Sin marcador ni campo extra (romperían el formato/orden).
+3. **Re-online en `on_connect`** (el agujero que el LWT abre): un blip > keepalive
+   dispara el will → offline RETENIDO → paho reconecta solo → sin esto, la cama viva
+   quedaría marcada muerta para siempre. Mismo patrón que la re-suscripción del ingestor
+   (ADR-021): *lo que no se re-manda solo se rehace en on_connect* — con el contraste
+   verificado: el SUBSCRIBE hay que re-mandarlo; el **will lo re-manda paho en cada
+   CONNECT** (`_send_connect` lee `self._will` siempre), así que no se re-arma. El
+   callback va blindado como los del ingestor (firma VERSION2 de 5 args, guard duck-typed
+   del CONNACK fallido, todo bajo except: una excepción mataría el hilo de red sin
+   reconexión). El online duplicado del arranque (callback + `correr()`) son dos filas
+   `retenido=0`: duplicado at-least-once ya aceptado (ADR-021 punto 7).
+4. **Latencias**: muerte del PROCESO (kill -9, crash, OOM) = el kernel cierra el socket
+   sin DISCONNECT (FIN/RST) → will INMEDIATO. Muerte SILENCIOSA (energía, cable) →
+   ~1.5×keepalive. `KEEPALIVE_S = 15` (antes 60): detección ~22 s en vez de ~90 s, costo
+   ≈ cero — con vitales a 1 Hz los publishes+PUBACKs son el keepalive efectivo y el
+   PINGREQ solo aparece si el pipeline calla >15 s. `reconnect_delay_set(1, 30)` (el
+   default de paho llega a 120 s) y `on_disconnect` con log (los logs internos de paho
+   son DEBUG: invisibles en journald).
+5. **Orden del cableado** (fijado por test): `will_set` → `on_connect` → `connect` →
+   `loop_start`. El will viaja en el paquete CONNECT; un callback asignado tras el
+   connect correría carrera con el primer CONNACK.
+6. **Límites honestos**: (a) el LWT detecta la muerte de la SESIÓN — un pipeline OCR
+   colgado con proceso vivo mantiene el keepalive (el hilo de red de paho responde solo)
+   y el online retenido: la señal de vida real sigue siendo el flujo de vitales
+   (ADR-021); watchdog de pipeline = seguimiento futuro. (b) El **simulador queda fuera
+   por imposibilidad estructural**: usa UN cliente para todas las camas y MQTT permite UN
+   will por conexión — no puede testamentar N camas (es banco de pruebas, no clínico).
+   (c) El offline del will re-entregado como retained a la ingesta en cada re-suscripción
+   llega marcado `retenido=1` y la lectura canónica lo filtra.
+
+**Aceptación**: cliente creado con will bien formado (retained+QoS 1) — tests con stub
+del paquete paho completo (tres claves de sys.modules: el binding `as` de un import con
+puntos resuelve por getattr del padre y un stub de una sola clave puede colar el paho
+real según el orden de la suite); Ctrl+C sigue publicando offline por `cerrar()`; banco
+(Dr. Milton): `kill -9` al OCR → `mosquitto_sub -t 'monitoreo/estado/#' -v` muestra el
+offline retenido (y la fila en la tabla `estado` de la BD, cuando la ingesta de ADR-021
+ya corra en el servidor — hoy pendiente de despliegue); reconexión (restart de mosquitto)
+→ online re-publicado al volver. `compileall` + suite verdes. Nota operativa: dos
+publicadores de la misma cama comparten client_id → takeover mutuo del broker, que
+publica el will del expulsado en cada patada: flapping offline/online retenido (el log
+del runner lo delata: "desconexiones inmediatas repetidas"). El apagado limpio DESARMA
+on_connect antes de la ventana del sleep: una reconexión ahí re-publicaría online para
+una cama apagada (invariante estructural, no de rebote: mantener el min_delay de
+reconexión por encima de la ventana de cierre).

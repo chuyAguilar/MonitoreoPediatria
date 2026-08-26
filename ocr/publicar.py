@@ -154,7 +154,15 @@ def main(argv=None) -> int:
         print(f"OCR -> CONSOLA (sin MQTT). cama={args.cama_id} motor={args.motor}")
     else:
         try:
-            cliente = crear_cliente_mqtt(args.broker, args.puerto_broker, client_id=f"ocr-{args.cama_id}")
+            # Last Will (ADR-022): el broker publica el offline retenido si el
+            # edge muere de golpe; on_connect re-publica online al reconectar.
+            from ocr.publicador import al_conectar_republica_online, will_de_estado
+            cliente = crear_cliente_mqtt(
+                args.broker, args.puerto_broker,
+                client_id=f"ocr-{args.cama_id}",
+                will=will_de_estado(args.cama_id, args.device_id),
+                al_conectar=al_conectar_republica_online(args.cama_id, args.device_id),
+            )
         except (OSError, RuntimeError) as e:
             fuente.cerrar()
             print(f"ERROR: no se pudo crear/conectar el cliente MQTT {args.broker}:{args.puerto_broker}: {e}")
