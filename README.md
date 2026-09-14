@@ -6,11 +6,12 @@ Plataforma de monitoreo para pediatría/neonatología: muestra en tiempo real, e
 
 ## Documentación mínima viable (MVD)
 
-Antes de tocar código, empieza por estos tres documentos:
+Antes de tocar código, empieza por estos cuatro documentos:
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — topología, componentes, flujo de datos y diagramas.
 - [`DECISIONS.md`](DECISIONS.md) — registro de decisiones de arquitectura (ADRs) y sus porqués.
 - [`CONTEXT.md`](CONTEXT.md) — reglas de negocio, límites de seguridad, variables de entorno, estado/WIP y restricciones para colaboradores.
+- [`PENDIENTES.md`](PENDIENTES.md) — backlog vivo priorizado (🔴/🟡/🟢) con dueño por ítem.
 
 ## Cómo se obtiene el dato (paradigma actual)
 
@@ -54,7 +55,7 @@ persistencia/  Ingesta de vitales a SQLite en el servidor (ADR-021): python -m p
 web/nextapp/   Dashboard web (Next.js, export estático)
 docs/ito1/     Documentación e imágenes del Hito 1
 docs/ito2/     Documentación, contrato de datos, runbook y diagramas del Hito 2
-ARCHITECTURE.md · DECISIONS.md · CONTEXT.md   Documentación mínima viable (MVD)
+ARCHITECTURE.md · DECISIONS.md · CONTEXT.md · PENDIENTES.md   Documentación mínima viable (MVD)
 ```
 
 ## Inicio rápido
