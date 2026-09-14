@@ -10,23 +10,25 @@ Guía completa para montar el sistema del Hito 2 desde una instalación limpia, 
 
 | Rol | Equipo | SO | Tailscale | Qué corre |
 |-----|--------|----|-----------|-----------| 
-| **Servidor** | Gateway (Celeron) | Ubuntu Server | `100.110.157.112` | Mosquitto (datos), MediaMTX (video), web estática |
-| **Edge** | laptop / Raspberry por sala | Linux (Mint/Ubuntu) | `100.72.226.69` | Simulador: publica datos + transmite webcam |
+| **Servidor** | Gateway (Celeron) | Ubuntu Server | `100.110.157.112` | Mosquitto (datos), MediaMTX (video), web estática, ingesta a SQLite |
+| **Edge real** | Jetson Orin Nano (`jetson-01`) | JetPack 6 / Ubuntu 22.04 | `100.80.150.79` | OCR del monitor + video de la cama, como servicios systemd (ADR-023) |
+| **Edge (simulación)** | laptop / Raspberry por sala | Linux (Mint/Ubuntu) | `100.72.226.69` | Simulador: publica datos + transmite webcam |
 | **Mando** | PC de visualización | Windows / cualquiera | `100.69.158.31` | Navegador para ver el dashboard |
 
-Las tres se unen por **Tailscale** (misma cuenta). Las IPs `100.x` son fijas de Tailscale.
+Las cuatro se unen por **Tailscale** (misma cuenta). Las IPs `100.x` son fijas de Tailscale.
+Conexión al edge real: `ssh jetson@100.80.150.79` (verifica con `tailscale status`).
 
 Puertos usados en el servidor: `1883` MQTT, `9001` MQTT-WebSocket, `8554` RTSP (entra el video), `8889` WebRTC (sale el video), `8080` web.
 
 ---
 
-## Parte 0 — Red (en las 3 máquinas)
+## Parte 0 — Red (en las 4 máquinas)
 
 Instala Tailscale en cada equipo e inicia sesión con la **misma cuenta**:
 - Linux: `curl -fsSL https://tailscale.com/install.sh | sh` y luego `sudo tailscale up`
 - Windows: instalador de tailscale.com/download/windows
 
-Verifica que se vean entre sí: `tailscale status` debe listar las tres.
+Verifica que se vean entre sí: `tailscale status` debe listar las cuatro.
 
 ---
 
@@ -198,12 +200,12 @@ cd ~/MonitoreoPediatria
 # 1) Descubrir la identidad de la cámara (nombre, serial, by-id, by-path):
 python -m video.transmitir --listar-dispositivos
 
-# 2) Transmitir la cama (ejemplo real del banco: la webcam Jieli NO tiene
-#    serial -> se elige por su PUERTO físico, fragmento del by-path):
-python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.2
+# 2) Transmitir la cama (ejemplo real del banco: la webcam de cama-09 va por
+#    su PUERTO físico, fragmento del by-path — el de la tabla de abajo):
+python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.3
 
 # Perfil bajo para redes flojas:
-python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.2 \
+python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.3 \
   --resolucion 640x480 --bitrate 800k
 
 # Depurar formatos de una cámara sin que el relanzador pelee contigo:
@@ -216,13 +218,14 @@ python -m video.transmitir --cama-id cama-09 --dispositivo /dev/video2 --una-vez
   y su pin queda anclado al by-id (verificado en banco tras corregir la guarda de
   by-id compartido, que comparaba por identidad de objeto y anclaba al puerto).
 - Webcam **sin serial** (las Jieli del banco: su by-id no trae serial) → usa el **puerto
-  físico** (fragmento del by-path, p. ej. `usb-0:2.2`) y **etiqueta físicamente el
-  puerto**. Dos webcams idénticas comparten by-id: solo el puerto las distingue.
+  físico** (el fragmento del by-path de TU puerto — el de cama-09 está en la tabla de
+  abajo) y **etiqueta físicamente el puerto**. Dos webcams idénticas comparten by-id:
+  solo el puerto las distingue.
 - Mantén una tabla puerto↔cama por Jetson (rellénala al instalar):
 
 | Jetson | Puerto (by-path) | Etiqueta física | Cama |
 |---|---|---|---|
-| jetson-01 | `usb-0:2.2` | "CAMA 09" | cama-09 |
+| jetson-01 | `usb-0:2.3` | "CAMA 09" (pendiente etiquetar el puerto) | cama-09 |
 
 En cada (re)lanzamiento el runner imprime el mapeo (`[cama-09] <- by-path ... -> rtsp://...`):
 verifícalo al dar de alta una cama. Si el video de una cama "parpadea" entre dos cámaras,
@@ -235,9 +238,13 @@ a ser OTRA cámara. Ojo: en el **arranque** una identidad ausente/ambigua o no v
 falla fuerte con exit 1 — el reintento indefinido aplica solo a media corrida, cuando ya
 no hay un humano delante (matriz de ADR-020). Ajusta
 `--fps` a lo que la webcam anuncie en MJPG (`v4l2-ctl --list-formats-ext -d /dev/videoN`);
-si pides un framerate que no da, el driver lo cambia en silencio. Detener: Ctrl+C. Como
-servicio systemd (futuro): el runner ya maneja SIGTERM con cierre limpio; basta un unit
-con `Restart=always` cuando se decida dar ese paso.
+si pides un framerate que no da, el driver lo cambia en silencio. Detener: Ctrl+C. **Como
+servicio systemd (ADR-023)**: las units templated ya viven en el repo —
+`video/video-transmitir@.service` y `ocr/ocr-publicar@.service`, con la config por cama en
+`/etc/monitoreo/cama-NN.conf` (ejemplo: `docs/ito2/cama-09.conf.ejemplo`) — instalación en
+la cabecera de cada unit y en `ocr/README.md` §Jetson. Con ellas ambos runners arrancan
+solos al encender la Jetson y reviven ante cualquier salida (`systemctl stop` para
+detener; un `kill -9` ya no detiene).
 
 ---
 
@@ -276,8 +283,9 @@ El servicio `dashboard` sirve esos archivos al instante (no hay que reiniciarlo)
 ## Orden de arranque
 
 1. **Servidor**: los servicios (`mosquitto`, `mediamtx`, `dashboard`, `vitales-ingest`) arrancan solos al encender. Verifica: `systemctl status mosquitto mediamtx dashboard vitales-ingest --no-pager`.
-2. **Edge**: conecta la webcam y lanza el simulador (Parte 2).
-3. **Mando**: abre `http://100.110.157.112:8080`.
+2. **Edge real (Jetson)**: arranca solo al encender (units `ocr-publicar@` y `video-transmitir@`, ADR-023). Los primeros exits del OCR tras el boot (tailnet aún subiendo) son el comportamiento esperado — systemd reintenta cada 5 s hasta que conecta. Solo la fuente necesita manos: la Mac en modo espejo/SimCore encendida.
+3. **Edge de simulación** (si se usa): conecta la webcam y lanza el simulador (Parte 2).
+4. **Mando**: abre `http://100.110.157.112:8080`.
 
 ---
 

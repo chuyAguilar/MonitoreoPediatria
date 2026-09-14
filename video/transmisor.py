@@ -34,7 +34,7 @@ Identidad del dispositivo (extiende ADR-018 al relanzamiento automático):
 Cierre limpio: sin handler propio de SIGINT — KeyboardInterrupt emerge de
 wait()/sleep (PEP 475) y el apagado (terminate -> gracia -> kill) corre en
 except/finally, el patrón de `ocr.publicar.correr`. El CLI mapea SIGTERM a la
-misma excepción (systemd futuro). En Linux el ffmpeg se lanza con
+misma excepción (systemctl stop, ADR-023). En Linux el ffmpeg se lanza con
 PR_SET_PDEATHSIG: si el runner muere sin limpiar, ffmpeg muere con él y no
 retiene /dev/videoN (EBUSY).
 """

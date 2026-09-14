@@ -419,6 +419,99 @@ def test_cli_cablea_el_will_con_la_cama_de_args(monkeypatch):
     assert capturado["client_id"] == "ocr-cama-07"
 
 
+# --- SIGTERM -> cierre limpio (ADR-023) ------------------------------------
+
+
+def test_senal_a_interrupcion_lanza_keyboardinterrupt():
+    import signal
+
+    from ocr.publicar import _senal_a_interrupcion
+
+    previo = signal.getsignal(signal.SIGTERM)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            _senal_a_interrupcion(signal.SIGTERM, None)  # aridad real de handler
+        # Se desarma a sí mismo: un SEGUNDO SIGTERM durante el apagado
+        # abortaría el offline pero dejaría el disconnect limpio, que
+        # DESCARTA el will -> cama "online" fantasma. Los siguientes se
+        # ignoran.
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
+    finally:
+        signal.signal(signal.SIGTERM, previo)
+
+
+def test_main_instala_y_restaura_el_handler_de_sigterm(monkeypatch):
+    # El handler debe estar instalado DURANTE correr() y restaurado al salir
+    # (no filtrar estado global de señales a pytest — lección ito-10).
+    import signal
+    import sys
+
+    from ocr import publicar
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
+    visto = {}
+
+    def correr_falso(*_a, **_k):
+        visto["durante"] = signal.getsignal(signal.SIGTERM)
+
+    monkeypatch.setattr(publicar, "correr", correr_falso)
+    previo = signal.getsignal(signal.SIGTERM)
+    assert publicar.main(["--solo-consola", "--motor", "plantilla"]) == 0
+    assert visto["durante"] is publicar._senal_a_interrupcion
+    assert signal.getsignal(signal.SIGTERM) is previo
+
+
+def test_main_restaura_sigterm_aunque_correr_lance(monkeypatch):
+    # La restauración vive en un finally: sobrevive a un crash del bucle.
+    import signal
+    import sys
+
+    from ocr import publicar
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", None)
+
+    def correr_que_lanza(*_a, **_k):
+        raise RuntimeError("crash del bucle (test)")
+
+    monkeypatch.setattr(publicar, "correr", correr_que_lanza)
+    previo = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(RuntimeError):
+        publicar.main(["--solo-consola", "--motor", "plantilla"])
+    assert signal.getsignal(signal.SIGTERM) is previo
+
+
+def test_cierre_por_senal_publica_offline_y_libera_la_fuente(perfil_simcore):
+    # Lo que _senal_a_interrupcion produce (KeyboardInterrupt a mitad de
+    # corrida) debe terminar en offline publicado y fuente liberada — el
+    # criterio de aceptación "systemctl stop -> offline".
+    class ClienteQueInterrumpe(ClienteFalso):
+        def publish(self, topic, payload, qos=0, retain=False):
+            super().publish(topic, payload, qos=qos, retain=retain)
+            if len(self.publicaciones) == 3:  # online + 2 vitales
+                raise KeyboardInterrupt
+
+    cliente = ClienteQueInterrumpe()
+    fuente = FuenteImagenFija(FRAME)
+    cerrada = {"ok": False}
+    cerrar_real = fuente.cerrar
+    fuente.cerrar = lambda: (cerrada.__setitem__("ok", True), cerrar_real())
+
+    publicador = PublicadorOCR("cama-01", "jetson-01", cliente)
+    # max_ticks acota: si una regresión cambia el flujo de publicaciones y la
+    # interrupción del publish #3 no dispara, el test FALLA ruidoso en vez de
+    # colgarse a 1000 Hz sin timeout.
+    correr(fuente, LectorPlantilla(), perfil_simcore, "cama-01", "jetson-01",
+           publicador, hz=1000.0, max_ticks=50)
+
+    estados = [json.loads(p[1])["estado"]
+               for p in cliente.de_topic("monitoreo/estado/cama-01")]
+    assert estados[-1] == "offline", "la señal debe cerrar con offline"
+    assert cliente.desconectado is True
+    assert cerrada["ok"], "la capturadora/fuente debe liberarse"
+    # y la salida fue por la INTERRUPCIÓN en el tick 2, no por agotar ticks
+    assert len(cliente.de_topic("monitoreo/vitales/cama-01")) == 2
+
+
 def test_cli_falla_limpio_sin_motor_real_en_solo_consola(monkeypatch):
     """--solo-consola sin el motor de producción sale con código 1, no un traceback."""
     import sys

@@ -1,0 +1,52 @@
+# Plantilla systemd del video de UNA cama (ADR-023). Instancia %i = cama_id:
+#   sudo systemctl enable --now video-transmitir@cama-09
+#
+# ANTES de enable --now (runbook completo en ocr/README.md, seccion Jetson):
+#   0. MATAR el nohup+while manual si sigue vivo (pgrep -af 'while true|video.transmitir'):
+#      primero el bash del while, luego el python (dos lectores del mismo
+#      dispositivo V4L2 = EBUSY).
+#   1. Verificar la ruta del repo: ls /home/jetson/MonitoreoPediatria/video/transmitir.py
+#   2. Preflight con el python del SISTEMA:
+#        cd /home/jetson/MonitoreoPediatria && /usr/bin/python3 -m video.transmitir --listar-dispositivos
+#      El runner de video no necesita el env conda (cero dependencias pip,
+#      ADR-020; ocr.dispositivos es stdlib puro) — por eso /usr/bin/python3.
+#      SI ese preflight fallara con ImportError (opencv/numpy u otro arrastre
+#      futuro), usa el env conda tambien aqui: cambia ExecStart al python de
+#      /home/jetson/miniconda3/envs/ocr-monitoreo/bin/python.
+#   3. sudo mkdir -p /etc/monitoreo && crear /etc/monitoreo/cama-09.conf
+#      (ejemplo: docs/ito2/cama-09.conf.ejemplo; compartido con el OCR).
+#   4. Instalar esta unit y recargar el manager:
+#      sudo cp video/video-transmitir@.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#
+# Para DETENER: systemctl stop (un kill -9 ya NO detiene: systemd revive).
+# En el stop, systemd manda SIGTERM a TODO el cgroup (KillMode por defecto):
+# el ffmpeg recibe su propio SIGTERM ademas del terminate del supervisor —
+# doble senal esperada y benigna (ADR-023); el terminate->gracia->kill interno
+# queda para los estancamientos a media corrida (ADR-020).
+
+[Unit]
+Description=Video de la cama %i hacia MediaMTX (ADR-023)
+After=network-online.target
+Wants=network-online.target
+# Mismo criterio que el OCR: el supervisor externo jamas se rinde; el backoff
+# INTERNO del runner (ADR-020) cubre el mid-corrida, systemd cubre salidas
+# duras y el arranque tras reboot. RestartSec=5 evita el bucle caliente.
+StartLimitIntervalSec=0
+
+[Service]
+User=jetson
+WorkingDirectory=/home/jetson/MonitoreoPediatria
+# Sin prefijo '-' a proposito: conf ausente = flapeo visible, no vars vacias.
+EnvironmentFile=/etc/monitoreo/%i.conf
+Environment=PYTHONUNBUFFERED=1
+# Guard-rail CRITICO aqui: con --servidor vacio el runner quedaria "active"
+# reintentando rtsp://:8554/... sin transmitir — el fallo mas mudo posible.
+ExecStartPre=/bin/sh -c 'test -n "$${DISPOSITIVO_VIDEO}" && test -n "$${SERVIDOR_VIDEO}"'
+ExecStart=/usr/bin/python3 -m video.transmitir --cama-id %i --dispositivo ${DISPOSITIVO_VIDEO} --servidor ${SERVIDOR_VIDEO}
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=multi-user.target

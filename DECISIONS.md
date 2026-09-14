@@ -30,6 +30,7 @@
 | ADR-020 | Video por cama: runner supervisado con identidad estable (x264 software, watchdog de progreso) | Aceptada |
 | ADR-021 | Persistencia de vitales: ingesta MQTT → SQLite (WAL + lotes, esquema ancho + raw, todo-cada-tick) | Aceptada |
 | ADR-022 | Last Will (LWT) en el cliente MQTT del OCR: estado honesto ante muerte súbita del edge | Aceptada |
+| ADR-023 | Supervisión systemd del edge: units templated con límite de arranque desactivado | Aceptada |
 
 ---
 
@@ -1007,3 +1008,84 @@ del runner lo delata: "desconexiones inmediatas repetidas"). El apagado limpio D
 on_connect antes de la ventana del sleep: una reconexión ahí re-publicaría online para
 una cama apagada (invariante estructural, no de rebote: mantener el min_delay de
 reconexión por encima de la ventana de cierre).
+
+---
+
+## ADR-023 — Supervisión systemd del edge (OCR + video)
+
+**Estado:** Aceptada (sep 2026)
+
+**Contexto.** Los runners del edge se corrían a mano en una sesión SSH de la Jetson: al
+cerrar el SSH, dormir la laptop o reiniciar, morían sin revivir (noche del 5-sep; el
+parche fue un `nohup+while` manual que no sobrevive reboots ni da cierre limpio).
+Agravante de diseño: el OCR **sale a propósito** ante fallo de lectura (nunca un frame
+viejo) — p. ej. cada vez que la Mac se duerme y la capturadora ve negro — así que va a
+salir y re-arrancar seguido en una noche normal.
+
+**Decisión: units templated de systemd** (`ocr/ocr-publicar@.service`,
+`video/video-transmitir@.service`; instancia `%i` = `cama_id`), espejo de
+`vitales-ingest.service`, con la config por cama en `EnvironmentFile`
+`/etc/monitoreo/%i.conf` (un archivo por cama alimenta ambas units; ejemplo en
+`docs/ito2/cama-09.conf.ejemplo`). El despliegue lo hace Dr. Milton; instalación en la
+cabecera de cada unit + `ocr/README.md` §Jetson.
+
+1. **El supervisor jamás se rinde**: `Restart=always` + `RestartSec=5` +
+   `StartLimitIntervalSec=0` (en `[Unit]`). Precisión que importa: con `RestartSec=5` el
+   límite por defecto (burst 5 en 10 s) ya es **inalcanzable** (máx. 3 arranques por
+   ventana); el `=0` lo hace explícito y blinda contra un futuro `RestartSec` más corto.
+   `RestartPreventExitStatus=2`: argparse sale con 2 ante flags/valores malformados — un
+   typo de config queda PARADO y visible en vez de flapear eterno; el exit 1 legítimo
+   (identidad ausente, broker caído) sí reintenta. `systemctl stop` no dispara Restart
+   (semántica de systemd) — y el corolario operativo: **un `kill -9` ya no detiene** los
+   runners; para detener, `systemctl stop`.
+2. **Rutas literales en el unit, parámetros en el EnvironmentFile**: systemd no expande
+   variables en `WorkingDirectory` ni en el ejecutable de `ExecStart` — el python del env
+   y la raíz del repo van fijos (con verificación en la cabecera: la ruta de miniconda es
+   el default *probable*, no un hecho), y `${VAR}` solo en argumentos. El OCR corre con
+   el **python del env conda por ruta absoluta, sin `conda activate`** (suficiente para
+   este stack: onnxruntime no exige vars del activate); el video con el **python del
+   sistema** (cero dependencias pip, ADR-020; `ocr.dispositivos` es stdlib puro) — si un
+   preflight fallara por un arrastre futuro (opencv/numpy), la cabecera indica usar el
+   env conda también ahí. `PYTHONUNBUFFERED=1` porque los prints del OCR no llevan flush
+   (sin él, journald mudo).
+3. **Modos de fallo del EnvironmentFile, decididos**: SIN prefijo `-` a propósito (conf
+   ausente por typo de instancia → la unit flapea visible; crear el conf la autosana; el
+   `-` sería peor: arrancaría con variables vacías). Y como un `${VAR}` ausente se
+   expande a argumento VACÍO (no se omite), cada unit lleva un `ExecStartPre` que exige
+   las claves obligatorias — crítico para el video, donde `--servidor` vacío dejaría la
+   unit "active" reintentando `rtsp://:8554/…` sin transmitir jamás.
+4. **Identidad estable OBLIGATORIA en el conf** (extiende ADR-018/020): `DISPOSITIVO_*`
+   solo serial o by-path, JAMÁS `/dev/videoN` — bajo `Restart=always`, el fatal de "nodo
+   literal que cambió de cámara" (ADR-020) deja de proteger: cada reinicio es un proceso
+   nuevo que fijaría el pin a ciegas a la cámara que hoy ocupe el nodo (el incidente de
+   ADR-018, automatizado). Riesgo residual multi-cama (espejo del §7 de ADR-020): un
+   `DISPOSITIVO_*` repetido entre confs de la misma Jetson NO falla limpio — compite por
+   el dispositivo en cada reinicio del OCR (que sale seguido por diseño) y puede colgar
+   el mismo monitor de la cama equivocada. Regla: una capturadora y una webcam físicas
+   por cama; verificación de alta = el print `Fuente: FuenteCapturadora(...)` en
+   journalctl.
+5. **SIGTERM en `ocr.publicar`** (único cambio de código): `systemctl stop` manda
+   SIGTERM; el OCR solo atrapaba KeyboardInterrupt. Mismo patrón de la casa (transmitir/
+   ingerir): handler que lanza KeyboardInterrupt, instalado solo durante `correr()` y
+   restaurado en un finally — el `finally` del bucle ya publica el offline y libera la
+   capturadora, así que el stop produce un offline inmediato y ordenado; el Last Will
+   (ADR-022) queda de respaldo para la muerte dura. En el stop del video, systemd manda
+   SIGTERM a TODO el cgroup (KillMode por defecto, decisión explícita): el ffmpeg recibe
+   su propio SIGTERM además del terminate del supervisor — doble señal esperada y
+   benigna; el camino interno terminate→gracia→kill queda para los estancamientos a
+   media corrida (ADR-020).
+6. **Arranque tras reboot**: `After=network-online.target` no garantiza la tailnet — los
+   primeros exits del OCR mientras `tailscaled` sube son comportamiento esperado y
+   visible del diseño (reintento cada 5 s), no un fallo. `After=tailscaled.service` es
+   una mejora de orden opcional, nunca dependencia dura (el Restart ya corrige). Sin
+   `MemoryMax` por ahora: el techo del OCR (onnxruntime) se fija tras medir en banco —
+   decisión, no olvido. El perfil de ROIs va hoy por default; al llegar un segundo
+   modelo de monitor migra al conf por cama (no a la unit).
+
+**Aceptación**: units revisables en el repo (systemd no corre en el sandbox); SIGTERM →
+offline limpio con tests (los primeros tests de señales de la casa) y suite verde; banco
+(Dr. Milton): `enable --now` → la cama aparece; `systemctl stop` → offline; dormir la Mac
+→ el OCR sale y systemd lo revive sin rendirse; reboot → ambos arrancan solos (con el
+ruido esperado de la tailnet subiendo). El by-path de la webcam del banco quedó en
+`usb-0:2.3` (listado en vivo; la tabla puerto↔cama se corrigió de 2.2 y falta etiquetar
+el puerto físico).

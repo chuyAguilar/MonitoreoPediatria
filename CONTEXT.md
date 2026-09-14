@@ -5,7 +5,7 @@
 > debe respetar cualquier IA/colaborador que toque el código.
 > Complementa [`ARCHITECTURE.md`](ARCHITECTURE.md) (el *qué*) y [`DECISIONS.md`](DECISIONS.md) (el *porqué*).
 
-**Última actualización:** 2026-08-22
+**Última actualización:** 2026-09-14
 
 ---
 
@@ -67,7 +67,7 @@
 | **Servidor** (Gateway) | `gateway` | `100.110.157.112` | Celeron N4020, 3.6 GB RAM, Ubuntu Server. Mosquitto + MediaMTX + web. Disco USB para almacenamiento. Usuario ssh `chuy`. |
 | **Edge (POC previo)** | `chuypc` | `100.72.226.69` | MacBook Pro 2014, Linux Mint. En el paradigma nuevo: **reproduce el video externo del monitor**. Usuario `chuy`. |
 | **Mando / visor** | `bigdaddy` | `100.69.158.31` | PC Windows 11, i5 10th, 16 GB, RTX 3060. Navegador; build de la web; IA pesada a futuro. |
-| **Edge nuevo** | `jetson-01`… | (por asignar) | Jetson Orin Nano: capturadora + OCR + cámaras. `device_id` en el contrato. |
+| **Edge nuevo** | `jetson-01`… | `100.80.150.79` | Jetson Orin Nano (JetPack 6, usuario ssh `jetson`): capturadora + OCR + cámaras, como servicios systemd (ADR-023). `device_id` en el contrato. |
 
 ---
 
@@ -193,6 +193,15 @@ Detalle en ADR-021 y el runbook §1.4.
   `persistencia/vitales-ingest.service`; BD en `/home/chuy/datos/monitoreo/`, fuera del
   clon; `message_size_limit` y `max_queued_messages` en Mosquitto) y verificación en el
   servidor.
+- **Supervisión systemd del edge** (iteración 12, ADR-023): units templated
+  `ocr-publicar@.service` / `video-transmitir@.service` (instancia = cama) con
+  `Restart=always` + `StartLimitIntervalSec=0` (el OCR sale a propósito ante frame
+  negro: el supervisor jamás se rinde) y config por cama en `/etc/monitoreo/
+  cama-NN.conf` (identidad estable OBLIGATORIA: jamás /dev/videoN). `ocr.publicar`
+  maneja SIGTERM → `systemctl stop` publica el offline limpio (LWT de respaldo). Un
+  `kill -9` ya NO detiene los runners. **Pendiente**: despliegue en la Jetson por
+  Dr. Milton (matar el `nohup+while` ANTES del enable) y validación de banco (stop →
+  offline; Mac dormida → revive; reboot → ambos solos).
 - **Last Will del OCR** (iteración 11, ADR-022): el broker publica el `offline`
   retenido si el edge muere de golpe (kill -9/crash → inmediato; corte de energía →
   ~22 s con `KEEPALIVE_S=15`); `cerrar()→offline` se conserva para el apagado limpio

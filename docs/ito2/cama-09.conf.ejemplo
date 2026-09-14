@@ -1,0 +1,33 @@
+# /etc/monitoreo/cama-09.conf — config de la cama-09 en esta Jetson.
+# Lo leen AMBAS units (ocr-publicar@cama-09 y video-transmitir@cama-09).
+# Lo lee root (el manager de systemd), no el usuario del servicio.
+#
+# REGLA DURA (ADR-023): DISPOSITIVO_* SOLO identidad estable (serial o
+# by-path), JAMAS /dev/videoN ni indices — bajo Restart=always el fatal de
+# "nodo literal que cambio de camara" (ADR-020) deja de proteger: cada
+# reinicio fijaria el pin a ciegas a la camara que HOY ocupe el nodo (el
+# incidente de ADR-018, automatizado).
+#
+# Y los DISPOSITIVO_* NO pueden repetirse entre confs de la misma Jetson:
+# un duplicado no falla limpio — COMPITE por el dispositivo en cada reinicio
+# y puede colgar el monitor de la cama equivocada. Una capturadora y una
+# webcam fisicas POR CAMA.
+#
+# Copia aqui lo que te de --listar-dispositivos (el preflight de las units)
+# y actualiza la tabla puerto<->cama del runbook + la etiqueta fisica del
+# puerto. Claves OBLIGATORIAS: las cinco.
+
+# Capturadora HDMI->USB del monitor (por SERIAL: sigue a la unidad entre puertos)
+DISPOSITIVO_OCR=35562055
+
+# Webcam del paciente (por BY-PATH: las webcams sin serial se anclan al puerto;
+# verificado en vivo el 2026-09: usb-0:2.3 — etiqueta el puerto fisico)
+DISPOSITIVO_VIDEO=usb-0:2.3
+
+# Identidad del edge en el contrato
+DEVICE_ID=jetson-01
+
+# Broker MQTT (vitales/estado) y host de MediaMTX (RTSP) — hoy la misma
+# maquina del servidor, pero son cosas distintas (por eso dos claves)
+BROKER=100.110.157.112
+SERVIDOR_VIDEO=100.110.157.112

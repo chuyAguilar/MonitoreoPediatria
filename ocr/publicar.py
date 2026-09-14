@@ -19,6 +19,7 @@ Detener: Ctrl+C (publica la cama como offline y libera la capturadora).
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 
@@ -82,6 +83,25 @@ def _construir_motor(nombre):
         from ocr.motor.plantilla import LectorPlantilla
         return LectorPlantilla()
     return motor_por_defecto()  # producción (RapidOCR); falla fuerte si no está
+
+
+def _senal_a_interrupcion(*_args):
+    # SIGTERM (systemctl stop, ADR-023) -> el mismo camino de cierre limpio
+    # que Ctrl+C: correr() atrapa KeyboardInterrupt y su finally publica el
+    # offline y libera la capturadora. El Last Will (ADR-022) queda de
+    # respaldo para la muerte dura.
+    #
+    # El handler se DESARMA a sí mismo antes de lanzar: un SEGUNDO SIGTERM
+    # durante el apagado abortaría el publish del offline pero dejaría correr
+    # el disconnect LIMPIO del finally — y un disconnect limpio hace que el
+    # broker DESCARTE el will: cama "online" fantasma con el proceso muerto.
+    # El primer SIGTERM inicia el cierre; los siguientes se ignoran. (El
+    # finally de main restaura el handler original encima del SIG_IGN.)
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    except (ValueError, OSError):
+        pass
+    raise KeyboardInterrupt
 
 
 class _ClienteConsola:
@@ -171,7 +191,23 @@ def main(argv=None) -> int:
         print(f"OCR -> MQTT {args.broker}:{args.puerto_broker}  cama={args.cama_id} motor={args.motor}")
 
     print(f"Fuente: {fuente}. Ctrl+C para detener.\n")
-    correr(fuente, motor, perfil, args.cama_id, args.device_id, PublicadorOCR(args.cama_id, args.device_id, cliente), hz=args.hz)
+    # Handler de SIGTERM instalado solo mientras corre el bucle y RESTAURADO
+    # al salir (no filtrar estado global de señales a pytest/orquestadores —
+    # lección de la iteración 10; mismo patrón que video/transmitir y
+    # persistencia/ingerir).
+    handler_previo = None
+    try:
+        handler_previo = signal.signal(signal.SIGTERM, _senal_a_interrupcion)
+    except (ValueError, OSError):
+        pass  # plataforma sin SIGTERM o hilo no principal: Ctrl+C sigue OK
+    try:
+        correr(fuente, motor, perfil, args.cama_id, args.device_id, PublicadorOCR(args.cama_id, args.device_id, cliente), hz=args.hz)
+    finally:
+        if handler_previo is not None:
+            try:
+                signal.signal(signal.SIGTERM, handler_previo)
+            except (ValueError, OSError):
+                pass
     print("Detenido.")
     return 0
 

@@ -2,18 +2,19 @@
 
 Transmitir la webcam de la cama 9 eligiéndola por su puerto físico (la webcam
 del banco no tiene serial único; ver --listar-dispositivos y el runbook):
-    python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.2
+    python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.3
 
 Cámara con serial (p. ej. una capturadora): --dispositivo 35562055
 
 Perfil bajo para redes flojas:
-    python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.2 \
+    python -m video.transmitir --cama-id cama-09 --dispositivo usb-0:2.3 \
         --resolucion 640x480 --bitrate 800k
 
 Depurar formatos de cámara sin supervisión (un solo lanzamiento):
     python -m video.transmitir --cama-id cama-09 --dispositivo /dev/video2 --una-vez
 
-Detener: Ctrl+C (o SIGTERM: mismo cierre limpio; pensado para systemd futuro).
+Detener: Ctrl+C (o SIGTERM: mismo cierre limpio — es lo que manda el
+`systemctl stop` de video-transmitir@.service, ADR-023).
 El runner se relanza solo si el stream cae o se estanca (ADR-020); no publica
 MQTT ni toca el OCR: es el runner del VIDEO, como ocr.publicar lo es del dato.
 """
@@ -89,8 +90,9 @@ def _timeout_progreso(valor):
 
 def _senal_a_interrupcion(*_args):
     # SIGTERM -> el mismo camino de cierre limpio que Ctrl+C (KeyboardInterrupt
-    # emerge del wait()/sleep del supervisor). Es el wiring para el systemd
-    # futuro documentado en ADR-020.
+    # emerge del wait()/sleep del supervisor). Es el wiring que usa la unit
+    # video-transmitir@.service en el systemctl stop (ADR-023; anticipado en
+    # ADR-020).
     raise KeyboardInterrupt
 
 
@@ -108,7 +110,7 @@ def main(argv=None) -> int:
     p.add_argument("--dispositivo", required=False,
                    help="OBLIGATORIO (salvo --listar-dispositivos): identidad "
                         "estable de la cámara — serial (35562055), fragmento "
-                        "del by-id, o by-path/puerto físico (usb-0:2.2, para "
+                        "del by-id, o by-path/puerto físico (usb-0:2.3, para "
                         "webcams sin serial) — o ruta/índice literal "
                         "(/dev/videoN). Ver --listar-dispositivos")
     # El env se lee AQUÍ (no al importar el módulo): un orquestador que fije

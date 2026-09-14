@@ -98,8 +98,9 @@ muestra los mensajes; en el navegador, la cama aparece en el grid (el video most
 cámara" — es otro camino). **No corras el simulador sobre la misma `cama_id`**: ambos
 publican al mismo topic retenido y se pisarían; usa una cama dedicada para el OCR.
 
-> Si el proceso se mata en duro (`kill -9`) no se envía `offline`; la web marca la cama
-> desconectada igual por su timeout de datos (`TIMEOUT_DATOS_MS`, 5 s).
+> Si el proceso se mata en duro (`kill -9`), el **broker** publica el `offline` retenido
+> por Last Will (ADR-022); la web además marca la cama desconectada por su timeout de
+> datos (`TIMEOUT_DATOS_MS`, 5 s). Bajo systemd (ADR-023), systemd lo revive solo.
 
 ## Captura en vivo (capturadora HDMI→USB)
 
@@ -177,21 +178,43 @@ en el screenshot — son capturas de momentos distintos).
 4. **La fuente de video debe estar activa**: la Mac en **modo espejo** (o SimCore en el
    monitor externo) — si no, la capturadora entrega negro y todos los signos salen `null`
    (comportamiento correcto: no hay nada que leer).
-5. **Identificar la capturadora** (una vez): `python -m ocr.publicar --listar-dispositivos`
-   y fijar el serial en el comando (en este banco: `--dispositivo 35562055`). Así una
-   webcam conectada o un cambio de puerto no desvían la lectura a otra fuente (ADR-018).
-6. **Correr y verificar**: el comando de arriba; en el servidor
-   `mosquitto_sub -h localhost -t 'monitoreo/#' -v` y la cama en el dashboard, cambiando
-   en vivo con SimCore. **Last Will (ADR-022)**: matar el proceso SIN Ctrl+C
-   (`kill -9 <pid>`) → el broker publica solo el `offline` retenido en
-   `monitoreo/estado/<cama>` (visible en el mosquitto_sub; y como fila en la tabla
-   `estado` de la BD cuando la ingesta de ADR-021 ya corra en el servidor — hoy
-   pendiente de despliegue); al relanzar, el `online` reaparece. Con corte de energía
-   o cable, el `offline` tarda ~22 s (keepalive de 15 s). OJO: NO lances dos
-   publicadores de la misma cama — comparten client_id y el broker los expulsa
-   mutuamente (takeover), publicando el will del expulsado: flapping offline/online
-   (el runner lo delata con "desconexiones inmediatas repetidas").
-7. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
+5. **Identificar los dispositivos** (una vez): `python -m ocr.publicar --listar-dispositivos`.
+   El serial de la capturadora (en este banco: `35562055`) y el by-path de la webcam van al
+   **EnvironmentFile por cama** (`/etc/monitoreo/cama-NN.conf`, ejemplo en
+   `docs/ito2/cama-09.conf.ejemplo`) — ya no al comando (ADR-018/023). Identidad estable
+   SIEMPRE: jamás `/dev/videoN` en el conf.
+6. **Correr como servicio (ADR-023)** — reemplaza al `nohup+while` manual y al comando a
+   mano; el runbook de instalación completo va en la cabecera de las propias units:
+   ```bash
+   # 0) matar el nohup+while si sigue vivo: PRIMERO el bash del while, luego el python
+   pgrep -af 'while true|ocr.publicar|video.transmitir'
+   # 1) units + conf
+   sudo cp ocr/ocr-publicar@.service video/video-transmitir@.service /etc/systemd/system/
+   sudo mkdir -p /etc/monitoreo && sudo cp docs/ito2/cama-09.conf.ejemplo /etc/monitoreo/cama-09.conf
+   sudo systemctl daemon-reload
+   # 2) arrancar y dejar habilitado para el boot
+   sudo systemctl enable --now ocr-publicar@cama-09 video-transmitir@cama-09
+   # 3) verificar
+   systemctl status ocr-publicar@cama-09 video-transmitir@cama-09 --no-pager
+   journalctl -u ocr-publicar@cama-09 -f    # el print "Fuente: FuenteCapturadora(...)"
+                                            # es el mapeo camara<->cama a confirmar
+   ```
+   En el servidor: `mosquitto_sub -h localhost -t 'monitoreo/#' -v` y la cama en el
+   dashboard, cambiando en vivo con SimCore. Para detener: `systemctl stop` (SIGTERM →
+   offline limpio; **un `kill -9` ya NO detiene**: systemd revive en ~5 s). Dormir la Mac
+   (capturadora en negro) → el OCR sale y systemd lo revive sin rendirse — ese flapeo es
+   el diseño, no un fallo; lo mismo aplica los primeros segundos tras un reboot mientras
+   la tailnet sube.
+7. **Demo del Last Will (ADR-022) bajo systemd**: `kill -9 <pid del python>` → el broker
+   publica el `offline` retenido en `monitoreo/estado/<cama>` (visible en el mosquitto_sub;
+   y como fila en la tabla `estado` de la BD cuando la ingesta de ADR-021 ya corra en el
+   servidor) → systemd revive el proceso solo en ~5 s → el `online` reaparece **sin
+   manos**. Con corte de energía o cable, el `offline` tarda ~22 s (keepalive de 15 s).
+   OJO: NO lances dos publicadores de la misma cama — comparten client_id y el broker los
+   expulsa mutuamente (takeover) con flapping offline/online ("desconexiones inmediatas
+   repetidas" en el log); y NO repitas `DISPOSITIVO_*` entre confs de la misma Jetson
+   (competirían por el dispositivo en cada reinicio).
+8. Límite conocido (ADR-015): si un valor crece a más dígitos de los que su ROI admite,
    toca el borde y sale `null` (nunca un dato falso truncado). Con captura en vivo esto
    puede verse como `null` intermitente en valores extremos.
 

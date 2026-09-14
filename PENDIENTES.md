@@ -16,10 +16,12 @@
 
 ## 🔴 Alta
 
-- [ ] **[edge/back] Supervisión systemd del OCR+video en la Jetson** — Iteración 12, en
-  curso: units `Restart=always` con límite de arranque relajado (el OCR sale a propósito
-  ante frame negro), cierre limpio en `stop`, multi-cama. Reemplaza el `nohup+while`
-  manual del 5-sep.
+- [ ] **[edge/back] Supervisión systemd del OCR+video en la Jetson** — Iteración 12:
+  **código y units en el repo (ADR-023)**; falta el despliegue por Dr. Milton (matar el
+  `nohup+while` ANTES del enable) y la validación de banco (stop → offline; Mac dormida
+  → revive; reboot → ambos solos). En esa misma visita: **medir la memoria del OCR**
+  (onnxruntime) bajo systemd y fijar `MemoryMax` en `ocr-publicar@.service` (hoy
+  diferido a propósito — ADR-023).
 - [ ] **[infra/alfred] Reserva DHCP de la IP del servidor (`192.168.110.130`) en el
   TP-Link** — sin reserva, un reinicio del router puede mover la IP LAN y romper los
   candidatos ICE anunciados (ADR-019).
