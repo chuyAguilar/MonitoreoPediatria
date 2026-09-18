@@ -21,3 +21,8 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# Material del monitor candidato (GE Dash 4000): manuales de terceros con
+# COPYRIGHT + fotos — jamas al repo publico (CONTEXT seccion 2). Solo para
+# planear el perfil de OCR en local.
+monitorCandidato/

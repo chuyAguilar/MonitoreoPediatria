@@ -10,24 +10,26 @@
 > `[back]` este repo · `[infra/alfred]` el agente del servidor · `[edge]` la Jetson ·
 > `[hardware]` equipos físicos.
 
-**Última actualización:** 2026-09-14
+**Última actualización:** 2026-09-15
 
 ---
 
 ## 🔴 Alta
 
-- [ ] **[edge/back] Supervisión systemd del OCR+video en la Jetson** — Iteración 12:
-  **código y units en el repo (ADR-023)**; falta el despliegue por Dr. Milton (matar el
-  `nohup+while` ANTES del enable) y la validación de banco (stop → offline; Mac dormida
-  → revive; reboot → ambos solos). En esa misma visita: **medir la memoria del OCR**
-  (onnxruntime) bajo systemd y fijar `MemoryMax` en `ocr-publicar@.service` (hoy
-  diferido a propósito — ADR-023).
-- [ ] **[infra/alfred] Reserva DHCP de la IP del servidor (`192.168.110.130`) en el
-  TP-Link** — sin reserva, un reinicio del router puede mover la IP LAN y romper los
-  candidatos ICE anunciados (ADR-019).
+_(Sin pendientes de prioridad alta en este momento — 15-sep-2026.)_
 
 ## 🟡 Media
 
+- [ ] **[edge] Medir la memoria del OCR bajo systemd y fijar `MemoryMax`** en
+  `ocr-publicar@.service` (era sub-tarea del supervisor systemd; diferida a propósito
+  hasta medir en banco — ADR-023).
+- [ ] **[infra→Dr. Milton] Reserva DHCP de la IP del servidor (`192.168.110.130`) en el
+  TP-Link** — bajada de 🔴 a 🟡: **solo afecta el acceso por WiFi local**; por **Tailscale**
+  (`100.110.157.112`, IP fija) el video funciona pase lo que pase con la IP de LAN, y un
+  candidato ICE muerto no rompe a los clientes de Tailscale. La reserva evita que la entrada
+  LAN de `webrtcAdditionalHosts` quede obsoleta en cada reinicio (hoy ya saltó a `.131`).
+  Alfred da la MAC (`00-E0-4C-88-00-5D`, iface Ethernet); la reserva la mete Dr. Milton en el
+  router cuando tenga acceso (falta la contraseña de admin, pendiente desde junio, ADR-019).
 - [ ] **[back/docs] Actualizar ADR-019 + runbook con la IP `.130`** (hoy documentan
   `192.168.110.4` en `webrtcAdditionalHosts`).
 - [ ] **[front] Probar la notificación en segundo plano** (app minimizada).
@@ -42,7 +44,9 @@
 - [ ] **[infra/alfred] Seguridad de servidor (pre-hospital)**: auth MQTT, TLS web,
   control de acceso al dashboard, auth de MediaMTX (CONTEXT §2). **+ [back]** el lado
   cliente de esa auth/TLS (edges, ingesta, web).
-- [ ] **[back] Arranque headless / bootstrap de los edges.**
+- [ ] **[back] Administración/monitoreo remoto de los edges + alta de camas** (el
+  auto-arranque al bootear ya lo cubre el systemd de la Iteración 12; falta lo remoto y
+  el provisioning — se junta con la interfaz visual).
 - [ ] **[back] Interfaz visual para operar el backend** — feature grande: diseñar
   primero, no improvisar.
 - [ ] **[infra/alfred] Salud continua de los servicios del servidor.**
@@ -61,6 +65,11 @@
 
 ## ✅ Hecho reciente (contexto)
 
+- [x] **[edge/back] Supervisión systemd del edge (Iteración 12, ADR-023)** — desplegada y
+  **validada en banco** (15-sep): `stop`→offline, `SIGKILL`→revive en ~5 s, reboot→ambos
+  `active` solos. Reemplaza el `nohup+while` manual. Nota de campo: la Jetson usa
+  `miniforge3` (no miniconda3); el video corre con el python del sistema. Pendiente
+  derivado: `MemoryMax` (arriba, 🟡).
 - [x] **[front]** `keepalive=15` (desconexión MQTT rápida); alertas en el teléfono
   (sonido/vibración/banner/notificación/foreground service); corrida en vivo end-to-end
   (OCR real → app).
