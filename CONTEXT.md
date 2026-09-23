@@ -27,8 +27,11 @@
 - **Alarmas con criterio, no ruido.** La lógica de alertas (futura) debe disparar **solo ante
   anomalías muy fuera de lo común**. Un neonato en terapia intensiva siempre tendrá lecturas
   atípicas; saturar de alarmas genera fatiga y es contraproducente.
-- **"Caja negra" (requisito de Luis Enrique).** A futuro: registro/log completo de lo que pasó,
-  para auditoría. Aún no implementado.
+- **"Caja negra" (requisito de Luis Enrique).** Registro/log completo de lo que pasó, para
+  auditoría. **Vitales: implementada en dos capas** — la BD del server (ADR-021, en
+  producción) y la caja negra local del edge con bridge (ADR-024; Fase 1 lista para
+  desplegar, backfill automático en la Fase 2). Pendiente: grabación de video,
+  retención y backup.
 
 ---
 
@@ -202,34 +205,40 @@ runbook §1.4 (server) / §2.2 (edge).
   (`clean_session=False`: un deploy no perfora el histórico; UNA sola instancia),
   disciplina dura de tipos sin re-validación clínica, lote envenenado aislado fila a
   fila, cierre limpio que vacía el pendiente. Guía de lectura: tendencias con
-  `retenido=0 AND malformado=0`. **Pendiente**: despliegue por alfred (plantilla
-  `persistencia/vitales-ingest.service`; BD en `/home/chuy/datos/monitoreo/`, fuera del
-  clon; `message_size_limit` y `max_queued_messages` en Mosquitto) y verificación en el
-  servidor.
+  `retenido=0 AND malformado=0`. **En producción en el servidor** (desplegada por
+  alfred; por ella se detectó el hueco de 4.5 días del 17–20 sep que motivó ADR-024).
 - **Caja negra en el edge + store-and-forward** (iteración 13, ADR-024): el server es
   OFF-SITE con enlace intermitente (hueco de 4.5 días del 17–20 sep) — el edge ya no
   depende de la red: mosquitto LOCAL en la Jetson (solo 127.0.0.1), el OCR publica a
   localhost (solo config, cero código en el camino vivo), un **bridge**
-  `cleansession true` lleva el live al server (re-sincroniza retained al reconectar) y
-  la **ingesta local** (persistencia/ reusada) persiste TODO en la BD del edge.
+  `cleansession true` (sin backlog) lleva el live al server — y mosquitto re-entrega
+  los retained en cada reconexión, incluidas vitales viejas que llegan como en vivo:
+  la app las descarta por su `ts` — y la **ingesta local** (persistencia/ reusada)
+  persiste TODO en la BD del edge.
   `monitoreo/edge/{device_id}/bridge` (retained 1/0, will del bridge en el server) =
-  señal de edge sin conexión desde F1. **Fase 1 entregada** (confs + unit + docs;
-  despliegue: Dr. Milton, runbook §2.2 — incluye chequeo NTP). **Fase 2 en
-  construcción**: reenviador (cursor + lotes por bytes + ACK de aplicación) y agregador
-  con dedup null-safe auditado + pruning del edge.
+  señal de edge sin conexión desde F1. **Fase 1 + F1.1 entregadas** (confs + unit +
+  docs; F1.1 corrigió el conf que NO arrancaba — `persistence_location` duplicada — y
+  blindó la app Flet 1.0.6, que se congelaba con el retained del bridge y no leía el
+  enlace; ahora marca "Sin conexión" y no pinta vitales con `ts` de más de 30 s).
+  Limitación abierta (ADR-024 §4): tras un apagón de la Jetson con el OCR sin poder
+  arrancar, la cama queda verde con `--`. Despliegue: Dr. Milton, runbook §2.2 — con el
+  **paso previo de la app 1.0.6 verificada en TODOS los teléfonos** y el chequeo NTP.
+  **Fase 2 en pausa** (diseño aprobado: reenviador + agregador con dedup + pruning)
+  hasta que F1/F1.1 esté desplegada — se construye sobre estas mismas confs.
 - **Supervisión systemd del edge** (iteración 12, ADR-023): units templated
   `ocr-publicar@.service` / `video-transmitir@.service` (instancia = cama) con
   `Restart=always` + `StartLimitIntervalSec=0` (el OCR sale a propósito ante frame
   negro: el supervisor jamás se rinde) y config por cama en `/etc/monitoreo/
   cama-NN.conf` (identidad estable OBLIGATORIA: jamás /dev/videoN). `ocr.publicar`
   maneja SIGTERM → `systemctl stop` publica el offline limpio (LWT de respaldo). Un
-  `kill -9` ya NO detiene los runners. **Pendiente**: despliegue en la Jetson por
-  Dr. Milton (matar el `nohup+while` ANTES del enable) y validación de banco (stop →
-  offline; Mac dormida → revive; reboot → ambos solos).
+  `kill -9` ya NO detiene los runners. **Desplegada y validada en banco el 15-sep**
+  (queda medir el `MemoryMax` del OCR — PENDIENTES).
 - **Last Will del OCR** (iteración 11, ADR-022): el broker publica el `offline`
   retenido si el edge muere de golpe (kill -9/crash → inmediato; corte de energía →
-  ~22 s con `KEEPALIVE_S=15`); `cerrar()→offline` se conserva para el apagado limpio
-  (y desarma `on_connect` antes de cortar), y `on_connect` re-publica `online` en cada
+  ~22 s con `KEEPALIVE_S=15` — **hasta el flip de ADR-024**: desde entonces el will
+  del OCR vive en el broker LOCAL y muere con él; el apagón lo señala el will del
+  bridge, `monitoreo/edge/{device_id}/bridge = 0`); `cerrar()→offline` se conserva
+  para el apagado limpio (y desarma `on_connect` antes de cortar), y `on_connect` re-publica `online` en cada
   reconexión (sin eso, un blip de red dejaría la cama viva marcada muerta para
   siempre). El ts del will es el del PRIMER connect — el arranque del runner (caveat
   en el ADR: para razonar tiempos, `recibido_en` de la BD). El simulador queda fuera
@@ -245,8 +254,8 @@ runbook §1.4 (server) / §2.2 (edge).
 
 **Pendiente / futuro (no empezado):**
 - Autenticación (MQTT + web) y TLS para despliegue real (ver §2).
-- "Caja negra" completa (grabación de video, retención/pruning, backup). El primer paso —
-  la persistencia de vitales a SQLite — ya está implementado (iteración 10, ADR-021).
+- "Caja negra" completa (grabación de video, retención/pruning, backup). Los vitales ya
+  están cubiertos en dos capas (server ADR-021 en producción; edge ADR-024 F1/F1.1).
 - Lógica de alarmas por anomalías (con criterio anti-fatiga).
 - Respiración por cámara de profundidad (Femto Bolt) + IA.
 - `git push` de la migración Next.js + simulador + docs ito2 si sigue pendiente.

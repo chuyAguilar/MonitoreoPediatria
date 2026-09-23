@@ -26,8 +26,12 @@
 
 [Unit]
 Description=OCR de vitales de la cama %i (ADR-023)
-After=network-online.target
-Wants=network-online.target
+# Desde ADR-024 el OCR publica al mosquitto LOCAL de la Jetson (el bridge lleva
+# el live al server): depende de ese broker, no de la tailnet. Wants y NO
+# Requires: un restart del broker no debe detener al OCR (su cliente MQTT
+# reconecta solo, ADR-022). Enmienda el orden de arranque de ADR-023 §6.
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
 # El OCR SALE a proposito ante frame negro (nunca un frame viejo, ADR-013/
 # fuente.py). Con RestartSec=5 el limite por defecto ya es inalcanzable
 # (max. 3 arranques por ventana de 10 s frente a un burst de 5); =0 lo hace

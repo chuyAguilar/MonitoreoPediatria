@@ -27,8 +27,14 @@ message_size_limit 65536
 # acortarla "para el bridge": max_queued_messages es GLOBAL del broker, y una
 # cola llena descarta lo NUEVO conservando lo VIEJO.
 max_queued_messages 20000
+
+# persistence true se deja EXPLICITO (documenta la intencion y protege la cola
+# de la sesion de la ingesta local si el conf de fabrica cambiara). La RUTA NO
+# va aqui: el /etc/mosquitto/mosquitto.conf de fabrica de Ubuntu ya trae
+# persistence_location /var/lib/mosquitto/ y repetirla hace que mosquitto NO
+# ARRANQUE ("Error: Duplicate persistence_location value"). Validado
+# arrancandolo (ADR-024): todo conf se valida ARRANCANDOLO, no leyendolo.
 persistence true
-persistence_location /var/lib/mosquitto/
 
 # ---------------- bridge al server off-site (el LIVE) ----------------
 connection al-server
@@ -47,7 +53,11 @@ bridge_protocol_version mqttv311
 # en cada (re)conexion del bridge re-publica al remoto los RETAINED vigentes
 # de los topics out (bridge__on_connect -> retain__queue; no depende de
 # cleansession ni de suscripcion alguna). Juntas: live fresco + estado del
-# server convergido en segundos.
+# server convergido en segundos. OJO: esa re-entrega trae tambien la ULTIMA
+# VITAL retenida de cada cama (puede tener minutos u horas si el OCR estaba
+# caido, o tras un apagon: este broker restaura sus retained del disco), y a
+# los suscriptores del server les llega como en vivo. Los consumidores la
+# juzgan por su ts (la app Flet descarta > 30 s; ADR-024 2 y 7).
 cleansession true
 restart_timeout 5
 # Deteccion de muerte SILENCIOSA del enlace en ~22 s (coherente con el

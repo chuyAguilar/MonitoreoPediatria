@@ -1082,6 +1082,9 @@ cabecera de cada unit + `ocr/README.md` §Jetson.
    `MemoryMax` por ahora: el techo del OCR (onnxruntime) se fija tras medir en banco —
    decisión, no olvido. El perfil de ROIs va hoy por default; al llegar un segundo
    modelo de monitor migra al conf por cama (no a la unit).
+   *Enmienda (ADR-024 §1, F1.1):* `ocr-publicar@` pasa a `After=`/`Wants=`
+   `mosquitto.service` — desde el flip el OCR publica al broker LOCAL; la tailnet deja
+   de ser su dependencia de datos (la sigue necesitando el video).
 
 **Aceptación**: units revisables en el repo (systemd no corre en el sandbox); SIGTERM →
 offline limpio con tests (los primeros tests de señales de la casa) y suite verde; banco
@@ -1095,8 +1098,8 @@ el puerto físico).
 
 ## ADR-024 — Caja negra en el edge + store-and-forward al server off-site
 
-**Estado:** Aceptada (sep 2026) · Fase 1 entregada; Fase 2 diseñada y aprobada, en
-construcción.
+**Estado:** Aceptada (sep 2026) · Fase 1 + F1.1 entregadas (despliegue pendiente,
+runbook §2.2); Fase 2 diseñada y aprobada, **EN PAUSA** hasta desplegar F1.
 
 **Contexto.** El server pasó a ser **off-site** con enlace intermitente (cortes de
 minutos a horas) y los hospitales pueden no tener internet. El OCR publicaba QoS 1
@@ -1111,6 +1114,15 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    privacidad: el patrón `0.0.0.0` del server expondría vitales de menores a la LAN del
    hospital). El OCR pasa a publicar a localhost — **cambio de config, cero código** en
    `ocr/`/`video/` (`BROKER=localhost` en el conf por cama; `SERVIDOR_VIDEO` intacto).
+   `persistence true` explícito en el conf del edge (documenta la intención y protege la
+   cola de la sesión de la ingesta local), pero **sin `persistence_location`**: el
+   `mosquitto.conf` de fábrica de Ubuntu ya la trae y repetirla impide arrancar
+   (`Error: Duplicate persistence_location value` — lo detectó Cowork arrancándolo; el
+   runbook verifica con `grep -E '^persistence'` el conf de fábrica antes de copiar).
+   La unit `ocr-publicar@` pasa a `After=`/`Wants=mosquitto.service` (depende del broker
+   local; **Wants y no Requires**, para que un restart del broker no detenga al OCR —
+   su cliente reconecta solo, ADR-022); se re-instala en el paso 4 del runbook.
+   Enmienda el orden de arranque de ADR-023 §6.
 2. **El live = bridge local→remoto con `cleansession true`** (`topic monitoreo/# out 1`,
    `remote_clientid` único por edge). La frescura post-corte NO se logra con colas:
    `max_queued_messages` es GLOBAL del broker (acortarlo caparía la cola de la sesión
@@ -1125,6 +1137,12 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    transición podía quedar mintiendo en el server). `keepalive_interval 15` en el
    bridge: la muerte silenciosa del enlace se detecta en ~22 s (coherente con ADR-022;
    el default de bridge, 60 s, tardaría ~90 s).
+   **Lo que la re-entrega también trae (hallazgo de la revisión de F1.1):** re-publica
+   las **vitales** retenidas, no solo el estado, y a los suscriptores ya conectados les
+   llegan con retain=0 (MQTT 3.1.1): indistinguibles de una lectura en vivo. Si el OCR
+   estaba caído durante el corte, esa vital tiene minutos u horas. La defensa vive en
+   el consumidor y es la frescura del `ts` del contrato (el OCR lo re-sella en cada
+   tick): ver §7 (app) y PENDIENTES (web).
 3. **La fiabilidad = ingesta local**: `persistencia/` reusada tal cual contra localhost,
    BD en `/home/jetson/datos/monitoreo/` (fuera del working tree). El código endurecido
    de ADR-021, cero código nuevo para capturar. **NTP obligatorio en el edge**: el
@@ -1140,6 +1158,21 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    viva (local → propagado por el bridge). El diagnóstico de takeover inter-edge que se
    pierde (cada OCR habla con SU broker) lo compensa el agregador en F2: aviso +
    `eventos_ingesta` si una misma `cama_id` llega de dos `device_id` en ventana corta.
+   **Limitación conocida — apagón de la Jetson (hallazgo ALTA de la revisión de F1.1):**
+   el will del OCR vive ahora en el broker LOCAL y muere con él. Durante el apagón el
+   will del bridge da `0` y la app marca "Sin conexión" (correcto). Al volver la
+   energía, el broker local restaura de su disco el estado `online` y las vitales
+   retenidas (de hasta ~30 min antes del corte, `autosave_interval` por defecto) y el
+   bridge los re-publica. Si el OCR arranca, en segundos publica estado y vitales
+   frescos y todo converge. Si NO arranca (p. ej. capturadora ausente tras el apagón:
+   `ocr.publicar` sale con 1 ANTES de conectar MQTT y systemd reintenta sin publicar
+   jamás un offline), la cama queda con el `online` viejo: la app ya NO pinta las
+   vitales viejas (frescura, §7), pero el punto queda **verde con `--`**. Antes del flip
+   ese caso daba offline a los ~22 s (ADR-022). Cierre pendiente de decisión (ver
+   PENDIENTES): en el edge, un `ExecStartPre` en `ocr-publicar@` que publique al broker
+   local el offline retenido del contrato para `%i` antes de cualquier fallo de
+   arranque; y/o en la app, un timeout de datos que no deje el verde sin vitales
+   frescas.
 5. **Backfill (Fase 2): reenviador con cursor + lotes MQTT + ACK de aplicación.**
    - Cursor high-water-mark (`reenvio(tabla, ultimo_id_confirmado)`, parte del esquema
      v2 versionado); pendiente = `id > cursor`; conexión SQLite propia con
@@ -1155,7 +1188,9 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
      ACK, con timeout acotado y reintento (el dedup absorbe re-envíos). El PUBACK del
      broker NO es garantía: solo confirma aceptación por el broker — el límite de
      tamaño, el tope de la ingesta, `max_queued_messages` y un restart del broker pueden
-     perder DESPUÉS del PUBACK.
+     perder DESPUÉS del PUBACK. El ACK NO viaja por el bridge (que es solo `out`): el
+     reenviador es cliente **directo** del broker remoto y se suscribe a
+     `backfill_ack/{device_id}` en esa misma conexión.
    - **Por qué MQTT+ACK y no una API HTTPS**: el broker + Tailscale + la sesión
      persistente de la ingesta ya dan transporte cifrado, cola y reintento sin UN SOLO
      componente nuevo en el server (una API sumaría servicio, deploy, auth y watchdog
@@ -1180,6 +1215,22 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    borradas tras uso (en F1, una copia es material de CONSULTA — sin dedup aún, jamás
    merge en la BD del server); acceso ssh/físico a la Jetson anotado; cifrado de disco y
    consentimiento institucional = decisiones de despliegue/institución, pendientes.
+7. **El consumidor principal es la app Flet** (repo aparte) y debe entender el topic de
+   enlace (F1.1): se suscribe SOLO a `monitoreo/vitales/+`, `monitoreo/estado/+` y
+   `monitoreo/edge/+/bridge` (nunca `monitoreo/#` — el retained `1` del bridge mataba su
+   hilo de paho: `json.loads` daba `int` y `"signos" in 1` lanzaba TypeError, la app
+   quedaba "Conectado" con valores congelados), despacha por topic con todo el callback
+   blindado, y marca **"Sin conexión"** (punto ámbar, valores `--`, alertas congeladas)
+   las camas cuyo edge tiene enlace `0` — estado DERIVADO, guardado por `device_id` e
+   independiente del orden de llegada. Sin eso, tras el flip la caída del edge dejaba la
+   cama "online" con valores congelados en la app (CONTEXT §2). Un enlace desconocido
+   (payload vacío o raro) jamás desmarca un `0` vigente, y el punto verde solo se gana
+   con estado `online` (falla cerrado). **Frescura**: la app NO pinta ni evalúa para
+   alertas una vital cuyo `ts` esté fuera de ±30 s de su reloj, o que no traiga `ts`
+   legible — la muestra `--` gris con las alertas congeladas, igual que "Sin conexión".
+   Cubre la re-entrega de vitales viejas del §2 y la restauración tras apagón del §4. El
+   precio: si el reloj del edge está mal (sin NTP, sin pila RTC), la app muestra `--` —
+   falla cerrado, nunca abierto.
 
 **Fases.** F1 (entregada): broker local + bridge + ingesta local — los datos quedan
 protegidos YA; el server queda ciego durante cortes (statu quo) hasta F2. F2: reenviador
@@ -1187,10 +1238,26 @@ protegidos YA; el server queda ciego durante cortes (statu quo) hasta F2. F2: re
 del edge. El interino de repuntar la Jetson a la LAN `.130` se salta (F1 lo sustituye);
 queda de plan B.
 
-**Aceptación F1** (banco, Dr. Milton): con el enlace vivo, latencia OCR→app
-indistinguible (A/B); corte largo CON ciclos online/offline del OCR durante el corte →
-al reconectar, `mosquitto_sub -v 'monitoreo/estado/#'` en el server igual al local y
-`monitoreo/edge/{device_id}/bridge` en `0` durante el corte y `1` al volver; filas
+**Regla de proceso (F1.1):** todo conf se valida **ARRANCÁNDOLO**, no leyéndolo — la
+revisión adversarial de 37 agentes leyó el conf de F1 y no vio que mosquitto no
+arrancaba con el `mosquitto.conf` de fábrica. La validación de F1.1 corrió mosquitto
+2.0.18 con una réplica del conf de fábrica + el `conf.d` del repo, un server simulado y
+un enlace cortable (reprodujo el error con el conf viejo; con el corregido: arranque,
+bridge, will `0` al cortar el enlace y con `kill -9`, re-sync del retained vigente).
+**Versión:** la Jetson (JetPack 6 = Ubuntu 22.04) instala por apt mosquitto **2.0.11**,
+no 2.0.18. El error de `persistence_location` duplicada existe igual en 2.0.11 (el
+arreglo vale), pero arranque, will del bridge, detección con `keepalive_interval 15` y
+re-sync quedaron validados en 2.0.18: la validación en la versión objetivo es la prueba
+del corte en banco. El runbook registra la versión instalada en el paso 1.
+
+**Aceptación F1** (banco, Dr. Milton): **paso previo — la app 1.0.6 instalada y
+verificada en el header de TODOS los teléfonos ANTES del paso 1** (el retained del
+enlace aparece al arrancar el bridge, no en el flip); con el enlace vivo, latencia
+OCR→app indistinguible (A/B); corte largo CON ciclos online/offline del OCR durante el
+corte → la app marca esas camas "Sin conexión" en ≤25 s; al reconectar,
+`mosquitto_sub -v 'monitoreo/estado/#'` en el server igual al local y
+`monitoreo/edge/{device_id}/bridge` en `0` durante el corte y `1` al volver; al volver
+el enlace con el OCR offline, la app NO muestra vitales como actuales (`--`); filas
 creciendo en la BD local durante TODO el corte; `SERVIDOR_VIDEO` intacto (video igual).
 Aceptación F2: corte → reconexión → el hueco del server se rellena solo (dedupeado,
 auditado) y el cursor avanza solo con ACKs.

@@ -250,20 +250,49 @@ detener; un `kill -9` ya no detiene).
 
 El server es off-site y el enlace puede caerse: el edge persiste TODO localmente y el
 live viaja por un bridge. **Orden de transición SIN pérdida** (cada paso es verificable
-antes del siguiente; el OCR sigue publicando al server hasta el paso 5):
+antes del siguiente; el OCR sigue publicando al server hasta el paso 4):
+
+**Paso previo OBLIGATORIO — la app corregida en TODOS los teléfonos** (F1.1). El
+retained `monitoreo/edge/{device_id}/bridge` aparece en el server en el **paso 1**
+(al arrancar el bridge), no en el flip — y la app anterior a la versión **1.0.6** se
+congela con él (su hilo MQTT muere y sigue mostrando "Conectado" con valores
+congelados). Antes del paso 1: **listar TODOS los teléfonos que tengan la app** (no
+solo el de Dr. Milton), instalar el APK 1.0.6 en cada uno y **verificar en el header
+de cada teléfono** que dice `v1.0.6`. Si falta uno, no se pasa al paso 1.
 
 ```bash
 # 0) Reloj sincronizado (el recibido_en de la BD local ES la linea temporal
 #    del historico y la que hereda el backfill de F2):
 timedatectl   # debe decir "System clock synchronized: yes" (si no: revisar NTP)
+#    (la app descarta vitales con ts a mas de 30 s de su reloj: un edge con
+#    la hora mal se ve "--" en la app — falla cerrado)
+
+# 0b) El clon de la Jetson AL DIA (los pasos 1 y 4 copian DESDE el clon: el
+#     conf de F1 original no arranca y la unit vieja no trae After/Wants):
+cd /home/jetson/MonitoreoPediatria && git pull && git log -1 --oneline
+#   -> el commit de F1.1 o posterior (si git pull se queja de cambios locales:
+#      PARAR y revisarlos, nunca forzar)
+grep -c '^persistence_location' docs/ito2/mosquitto-edge.conf.ejemplo   # -> 0
+grep -E '^(After|Wants)=' ocr/ocr-publicar@.service   # -> ambas con mosquitto.service
 
 # 1) Broker local + bridge (el OCR AUN publica directo al server: cero
 #    interferencia). mosquitto-clients trae mosquitto_sub (verificaciones) y
 #    sqlite3 el conteo de filas del paso 5:
 sudo apt install -y mosquitto mosquitto-clients sqlite3
+#   Anotar la version instalada (Ubuntu 22.04 trae 2.0.11; la validacion de
+#   F1.1 fue con 2.0.18 — la prueba del corte en banco valida ESTA version):
+dpkg -s mosquitto | grep '^Version'   # -> 2.0.11-... (anotarla en PENDIENTES)
+#   ANTES de copiar: el conf de FABRICA debe traer la persistencia (el nuestro
+#   NO repite la ruta — repetirla impide arrancar):
+grep -E '^persistence' /etc/mosquitto/mosquitto.conf
+#   -> debe mostrar:  persistence true  Y  persistence_location /var/lib/mosquitto/
 sudo cp docs/ito2/mosquitto-edge.conf.ejemplo /etc/mosquitto/conf.d/monitoreo-edge.conf
 #   -> editar los DOS "jetson-01" al device_id de esta Jetson
 sudo systemctl restart mosquitto && sudo systemctl enable mosquitto
+#   Verificacion cuantitativa (las tres, antes del paso 2):
+systemctl is-active mosquitto          # -> active
+ss -ltn | grep ':1883'                 # -> SOLO 127.0.0.1:1883 (invariante de privacidad)
+ls /etc/mosquitto/conf.d/              # -> solo monitoreo-edge.conf (+README): sin confs viejos
 
 # 2) Verificar el bridge y la senal de enlace — correr EN el server
 #    (ssh chuy@100.110.157.112):
@@ -281,6 +310,12 @@ sudo systemctl daemon-reload && sudo systemctl enable --now vitales-ingest-edge
 
 # 4) (por cama) El flip: BROKER=localhost en /etc/monitoreo/cama-NN.conf
 #    *** NO tocar SERVIDOR_VIDEO: el video sigue directo a MediaMTX ***
+#    Re-copiar la unit del OCR: la del repo ahora trae After/Wants=mosquitto
+#    (depende del broker LOCAL); sin re-copiarla, eso nunca llega a la Jetson.
+sudo cp ocr/ocr-publicar@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+systemctl show -p After,Wants ocr-publicar@cama-NN | grep mosquitto
+#   -> DOS lineas (After=... y Wants=...), ambas con mosquitto.service
 sudo systemctl restart ocr-publicar@cama-NN
 
 # 5) Verificar el mundo nuevo:
@@ -294,9 +329,15 @@ sudo systemctl restart ocr-publicar@cama-NN
 **Prueba del corte** (la razón de todo esto): tirar el internet del edge >2 min con el
 OCR ciclando (Mac dormida y despierta) → la BD local sigue creciendo TODO el corte; el
 server muestra `monitoreo/edge/<device_id>/bridge = 0` (a los ~22 s de un corte
-silencioso — keepalive del bridge de 15 s); al volver el enlace, la app queda al día en
-segundos y el estado retenido del server converge con el local (`mosquitto_sub -v
-'monitoreo/estado/#'` igual en ambos lados). El hueco del server se rellena solo cuando
+silencioso — keepalive del bridge de 15 s) y **la app marca esas camas "Sin conexión"
+(punto ámbar) en ≤25 s**; al volver el enlace, la app queda al día en segundos y el
+estado retenido del server converge con el local (`mosquitto_sub -v
+'monitoreo/estado/#'` igual en ambos lados). **Variante obligatoria**: devolver el
+enlace con el OCR en su fase offline (Mac dormida) → la app NO muestra vitales como
+actuales (`--` gris): el bridge re-entrega la última vital retenida y la app la
+descarta por su `ts` viejo. (Limitación conocida, ADR-024 §4: tras un APAGÓN de la
+Jetson con el OCR sin poder arrancar, la cama queda con punto verde y `--` — pendiente
+de decisión en PENDIENTES.) El hueco del server se rellena solo cuando
 llegue la Fase 2 (reenviador); mientras, una copia manual de la BD local es material de
 CONSULTA (adjuntarla aparte), **jamás** merge en la BD del server (sin dedup
 duplicaría) — y solo hacia el server, nunca a laptops, borrando la copia tras usarla

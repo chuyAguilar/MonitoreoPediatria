@@ -123,17 +123,29 @@ edge NO depende de la red para no perder datos:
 ```mermaid
 flowchart LR
     OCR["Publicador OCR<br/>(sin cambios)"] -->|"monitoreo/# QoS1"| ML["Mosquitto LOCAL<br/>(127.0.0.1, Jetson)"]
-    ML -->|"bridge cleansession=true<br/>(re-sincroniza retained al volver)"| MS["Mosquitto server<br/>(off-site, Tailscale)"]
+    ML -->|"bridge out (cleansession=true: sin backlog)<br/>+ re-entrega INCONDICIONAL de retained al reconectar"| MS["Mosquitto server<br/>(off-site, Tailscale)"]
     ML -->|"suscripción local"| IL["Ingesta local<br/>(persistencia/ reusada)"]
     IL --> BDL["SQLite del edge<br/>(la caja negra: no pierde)"]
     BDL -.->|"F2: reenviador, lotes +<br/>ACK de aplicación"| MS
     MS -->|"live + backfill dedupeado (F2)"| BDS["SQLite del server<br/>(agregador)"]
-    MS -->|"monitoreo/edge/{device_id}/bridge<br/>retained 1/0 (will del bridge)"| APP["App/Dashboard:<br/>edge con/sin conexión"]
+    MS -->|"monitoreo/edge/{device_id}/bridge<br/>retained 1/0 (will del bridge)"| APP["App Flet:<br/>'Sin conexión' por edge"]
 ```
 
 - El **live** va por el bridge en caliente (misma forma, mismos topics, mismo broker
   final); durante un corte se pausa (inevitable) y al reconectar **converge en
-  segundos**: la suscripción fresca del bridge re-entrega los retained vigentes.
+  segundos**. Dos mecanismos distintos, no uno: `cleansession true` compra SOLO el
+  no-backlog (durante el corte no se encola nada para el bridge), y la re-entrega de los
+  retained vigentes la hace mosquitto de forma INCONDICIONAL en cada (re)conexión del
+  bridge para los topics `out` (no depende de cleansession ni de suscripción alguna —
+  medido en la validación de F1.1: ~4 s, solo el ÚLTIMO mensaje retenido de cada topic).
+- Ojo: esa re-entrega incluye las **vitales** retenidas, y a los suscriptores ya
+  conectados les llegan como mensajes en vivo (retain=0 en MQTT 3.1.1). Si el OCR estaba
+  caído durante el corte, o si la Jetson se reinició tras un apagón (el broker local
+  restaura sus retenidos del disco), esas vitales tienen minutos u horas. Por eso los
+  consumidores juzgan la vital por su `ts` (el OCR lo re-sella en cada tick): la app Flet
+  no pinta ni evalúa para alertas una vital con `ts` fuera de ±30 s (falla cerrado). La
+  web NO lee el topic del edge: cubre la caída con su watchdog de datos (5 s) y aún no
+  filtra por `ts` (pendiente en PENDIENTES.md).
 - La **fiabilidad** vive en la BD local del edge; el server recibe el atraso por el
   canal de backfill (Fase 2) con deduplicación — jamás por la cola del bridge.
 - El video NO se buferea (en vivo por diseño; sigue directo a MediaMTX).
@@ -181,12 +193,16 @@ capacidad = otra Jetson. El servidor y la web no cambian: descubren camas por lo
 |---|---|---|---|
 | **Video externo de monitor** | Mac / Linux Mint | Simula la pantalla del monitor (POC) | salida HDMI |
 | **Capturadora HDMI** | Jetson | Digitaliza la pantalla del monitor | USB / dispositivo V4L2 |
-| **OCR + publicador** | Jetson | Lee los números → JSON contrato → MQTT | — |
-| **Cámaras + encode** | Jetson | Video en vivo por cama → RTSP | USB / V4L2 |
-| **Mosquitto** | Servidor `100.110.157.112` | Broker MQTT de vitales | `1883` mqtt, `9001` websockets |
+| **OCR + publicador** | Jetson | Lee los números → JSON contrato → MQTT al broker LOCAL (ADR-024) | — |
+| **Mosquitto local + bridge** | Jetson | Broker del edge (SOLO loopback) + bridge `out` del live al server; señal de enlace `monitoreo/edge/{device_id}/bridge` (ADR-024) | `1883` solo `127.0.0.1` |
+| **Ingesta local (caja negra)** | Jetson | `persistencia/` contra el broker local → SQLite del edge (`vitales-ingest-edge`) | — |
+| **Cámaras + encode** | Jetson | Video en vivo por cama → RTSP (directo al server; no se buferea) | USB / V4L2 |
+| **Mosquitto** | Servidor `100.110.157.112` | Broker MQTT de vitales (recibe el bridge de cada edge) | `1883` mqtt, `9001` websockets |
+| **Ingesta del server** | Servidor | `persistencia/` → SQLite del server (`vitales-ingest`, ADR-021); agregador del backfill en F2 | — |
 | **MediaMTX** | Servidor | Ingesta RTSP → sirve WebRTC | `8554` RTSP in, `8889` WHEP out |
 | **Web estática** | Servidor | Sirve el dashboard (systemd `dashboard`) | `8080` |
 | **Dashboard** | Navegador (mando) | Next.js export estático, grid de camas | — |
+| **App Flet (móvil)** | Teléfonos (repo aparte) | **Consumidor principal**: alertas + tarjetas por cama. Cliente MQTT del broker del server, suscrito SOLO a `vitales/+`, `estado/+` y `edge/+/bridge` (nunca `monitoreo/#`); marca "Sin conexión" las camas de un edge con enlace `0` (ADR-024 §7) | `1883` (cliente) |
 
 Toda la comunicación entre máquinas va cifrada sobre **Tailscale**.
 
@@ -296,6 +312,9 @@ ARCHITECTURE.md DECISIONS.md CONTEXT.md   Documentacion Minima Viable (MVD)
 - **Reemplazado como fuente de dato en producción:** el simulador digital y el adaptador
   HL7/PDS pasan a segundo plano; la fuente ahora es capturadora + OCR. El simulador
   **se conserva** como banco de pruebas de la web.
-- **Futuro (no implementado):** respiración por cámara de profundidad + IA, "caja negra"
-  completa (video, retención, backup — el primer paso, la persistencia de vitales a
-  SQLite, ya existe: ADR-021), lógica de alarmas por anomalías. Ver `CONTEXT.md` §Estado / WIP.
+- **Caja negra de vitales: implementada en dos capas** — la BD del server (ADR-021, en
+  producción) y la caja negra LOCAL del edge con bridge (ADR-024, Fase 1 lista para
+  desplegar; el backfill automático al server es la Fase 2).
+- **Futuro (no implementado):** respiración por cámara de profundidad + IA, grabación de
+  video, retención/backup, lógica de alarmas por anomalías en el back. Ver `CONTEXT.md`
+  §Estado / WIP y `PENDIENTES.md`.
