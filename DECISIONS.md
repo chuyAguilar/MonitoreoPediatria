@@ -31,6 +31,7 @@
 | ADR-021 | Persistencia de vitales: ingesta MQTT → SQLite (WAL + lotes, esquema ancho + raw, todo-cada-tick) | Aceptada |
 | ADR-022 | Last Will (LWT) en el cliente MQTT del OCR: estado honesto ante muerte súbita del edge | Aceptada |
 | ADR-023 | Supervisión systemd del edge: units templated con límite de arranque desactivado | Aceptada |
+| ADR-024 | Caja negra en el edge + store-and-forward: broker local, bridge para el live, backfill con ACK | Aceptada |
 
 ---
 
@@ -1089,3 +1090,107 @@ offline limpio con tests (los primeros tests de señales de la casa) y suite ver
 ruido esperado de la tailnet subiendo). El by-path de la webcam del banco quedó en
 `usb-0:2.3` (listado en vivo; la tabla puerto↔cama se corrigió de 2.2 y falta etiquetar
 el puerto físico).
+
+---
+
+## ADR-024 — Caja negra en el edge + store-and-forward al server off-site
+
+**Estado:** Aceptada (sep 2026) · Fase 1 entregada; Fase 2 diseñada y aprobada, en
+construcción.
+
+**Contexto.** El server pasó a ser **off-site** con enlace intermitente (cortes de
+minutos a horas) y los hospitales pueden no tener internet. El OCR publicaba QoS 1
+directo al broker remoto con cola solo en RAM y `clean_session=True`, y además SALE a
+propósito con regularidad (frame negro, ADR-023): todo corte era hueco permanente — el
+del 17–20 sep costó ~4.5 días de datos. **Restricción dura de la decisión**: NO degradar
+la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por diseño).
+
+**Decisión: la fiabilidad vive en el disco del edge, no en la red.**
+
+1. **Broker mosquitto LOCAL en la Jetson** (listener SOLO `127.0.0.1` — requisito de
+   privacidad: el patrón `0.0.0.0` del server expondría vitales de menores a la LAN del
+   hospital). El OCR pasa a publicar a localhost — **cambio de config, cero código** en
+   `ocr/`/`video/` (`BROKER=localhost` en el conf por cama; `SERVIDOR_VIDEO` intacto).
+2. **El live = bridge local→remoto con `cleansession true`** (`topic monitoreo/# out 1`,
+   `remote_clientid` único por edge). La frescura post-corte NO se logra con colas:
+   `max_queued_messages` es GLOBAL del broker (acortarlo caparía la cola de la sesión
+   persistente de la ingesta local — el canal de fiabilidad) y una cola llena descarta
+   lo NUEVO conservando lo VIEJO. `cleansession true` compra SOLO el no-backlog: el
+   corte no encola nada para el bridge. La **convergencia** la da mosquitto de forma
+   INCONDICIONAL: en cada (re)conexión del bridge re-publica al remoto los RETAINED
+   vigentes de los topics `out` (`bridge__on_connect → retain__queue`, verificado en
+   mosquitto 2.x — no depende de cleansession ni de suscripción alguna). Juntas: la app
+   y el estado retenido del server **convergen en segundos** (crítico: el OCR cicla
+   online/offline durante un corte con frame negro — sin la re-entrega, la última
+   transición podía quedar mintiendo en el server). `keepalive_interval 15` en el
+   bridge: la muerte silenciosa del enlace se detecta en ~22 s (coherente con ADR-022;
+   el default de bridge, 60 s, tardaría ~90 s).
+3. **La fiabilidad = ingesta local**: `persistencia/` reusada tal cual contra localhost,
+   BD en `/home/jetson/datos/monitoreo/` (fuera del working tree). El código endurecido
+   de ADR-021, cero código nuevo para capturar. **NTP obligatorio en el edge**: el
+   `recibido_en` de esta BD es la línea temporal del histórico (y la que hereda el
+   backfill) — `timedatectl` debe decir sincronizado ANTES de dar de alta el servicio.
+4. **Detección de edge sin conexión, desde la Fase 1 y sin código**: `notifications` del
+   bridge con `notification_topic monitoreo/edge/{device_id}/bridge` — el bridge
+   registra su PROPIO will en el broker REMOTO, que publica retained `0` al caer el
+   enlace (corte o Jetson muerta). Esto **sustituye la señal que se pierde** al mover el
+   will del OCR al broker local: antes, cualquier corte > keepalive publicaba offline en
+   el server (~22 s, ADR-022); ahora esa semántica la da el topic de edge (aditivo,
+   CONTRATO_DATOS.md). El will del OCR sigue cubriendo la muerte del PROCESO con Jetson
+   viva (local → propagado por el bridge). El diagnóstico de takeover inter-edge que se
+   pierde (cada OCR habla con SU broker) lo compensa el agregador en F2: aviso +
+   `eventos_ingesta` si una misma `cama_id` llega de dos `device_id` en ventana corta.
+5. **Backfill (Fase 2): reenviador con cursor + lotes MQTT + ACK de aplicación.**
+   - Cursor high-water-mark (`reenvio(tabla, ultimo_id_confirmado)`, parte del esquema
+     v2 versionado); pendiente = `id > cursor`; conexión SQLite propia con
+     `busy_timeout`, lecturas materializadas (jamás una transacción abierta durante el
+     envío: bloquearía el checkpoint y el `-wal` crecería sin cota), cursor en
+     transacción corta.
+   - Lotes por `monitoreo/backfill/{device_id}` con los **raw originales** (un solo
+     parser: el del server), dimensionados **por BYTES (~48 KB ≈ 50–80 filas)** — un
+     PUBLISH sobre `message_size_limit` en MQTT 3.1.1 se descarta EN SILENCIO con PUBACK
+     normal (v3.1.1 no tiene código de error en PUBACK).
+   - **La confirmación es un ACK de APLICACIÓN** (`monitoreo/backfill_ack/{device_id}`,
+     publicado por el agregador DESPUÉS del commit SQLite); el cursor avanza SOLO con el
+     ACK, con timeout acotado y reintento (el dedup absorbe re-envíos). El PUBACK del
+     broker NO es garantía: solo confirma aceptación por el broker — el límite de
+     tamaño, el tope de la ingesta, `max_queued_messages` y un restart del broker pueden
+     perder DESPUÉS del PUBACK.
+   - **Por qué MQTT+ACK y no una API HTTPS**: el broker + Tailscale + la sesión
+     persistente de la ingesta ya dan transporte cifrado, cola y reintento sin UN SOLO
+     componente nuevo en el server (una API sumaría servicio, deploy, auth y watchdog
+     propios); el único hueco real del PUBACK se cierra con el ACK de aplicación, que
+     son unas líneas en el agregador que ya existe.
+   - **Dedup en el agregador, null-safe y auditado**: `NOT EXISTS (cama_id IS ?1 AND ts
+     IS ?2 AND raw = ?3)` solo para el canal backfill (`=` con NULL jamás matchea: las
+     filas malformadas con ts NULL se duplicarían en cada replay — y los replays son
+     operación normal). El descarte se registra en `eventos_ingesta` (lote X: N ya
+     existían). La fila backfill lleva `recibido_en` = el del EDGE (la lectura canónica
+     de huecos sigue funcionando) y `canal='backfill'` (migración v2: ADD COLUMN).
+     **Enmienda explícita a ADR-021 §7**: el "sin UNIQUE(cama_id, ts)" se mantiene como
+     constraint; el dedup es lógica del canal backfill, auditada — el live sigue
+     at-least-once.
+   - **Pruning del edge en F2** (no F3): borrar `id <= cursor` con margen de N días.
+     Volumetría: ~70–90 MB/día/cama (4 camas × 30 días ≈ 8–11 GB) — sin pruning, la
+     Jetson se llena y la caja que existe para no perder empezaría a descartar.
+6. **Privacidad (CONTEXT §2)**: el contrato no lleva PII (cama_id pseudónimo; el mapeo
+   cama↔paciente no sale del hospital); transporte off-site SOLO Tailscale; bind local
+   del broker edge como invariante; el pendiente de auth MQTT crece con dos clientes
+   nuevos (bridge y reenviador); copias manuales de la BD edge SOLO hacia el server y
+   borradas tras uso (en F1, una copia es material de CONSULTA — sin dedup aún, jamás
+   merge en la BD del server); acceso ssh/físico a la Jetson anotado; cifrado de disco y
+   consentimiento institucional = decisiones de despliegue/institución, pendientes.
+
+**Fases.** F1 (entregada): broker local + bridge + ingesta local — los datos quedan
+protegidos YA; el server queda ciego durante cortes (statu quo) hasta F2. F2: reenviador
++ agregador con dedup + pruning. F3: métricas, afinado de retención, vigilancia de disco
+del edge. El interino de repuntar la Jetson a la LAN `.130` se salta (F1 lo sustituye);
+queda de plan B.
+
+**Aceptación F1** (banco, Dr. Milton): con el enlace vivo, latencia OCR→app
+indistinguible (A/B); corte largo CON ciclos online/offline del OCR durante el corte →
+al reconectar, `mosquitto_sub -v 'monitoreo/estado/#'` en el server igual al local y
+`monitoreo/edge/{device_id}/bridge` en `0` durante el corte y `1` al volver; filas
+creciendo en la BD local durante TODO el corte; `SERVIDOR_VIDEO` intacto (video igual).
+Aceptación F2: corte → reconexión → el hueco del server se rellena solo (dedupeado,
+auditado) y el cursor avanza solo con ACKs.

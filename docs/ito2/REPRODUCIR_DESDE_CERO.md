@@ -246,6 +246,69 @@ la cabecera de cada unit y en `ocr/README.md` §Jetson. Con ellas ambos runners 
 solos al encender la Jetson y reviven ante cualquier salida (`systemctl stop` para
 detener; un `kill -9` ya no detiene).
 
+### 2.2 Caja negra local + bridge al server off-site (ADR-024, Fase 1)
+
+El server es off-site y el enlace puede caerse: el edge persiste TODO localmente y el
+live viaja por un bridge. **Orden de transición SIN pérdida** (cada paso es verificable
+antes del siguiente; el OCR sigue publicando al server hasta el paso 5):
+
+```bash
+# 0) Reloj sincronizado (el recibido_en de la BD local ES la linea temporal
+#    del historico y la que hereda el backfill de F2):
+timedatectl   # debe decir "System clock synchronized: yes" (si no: revisar NTP)
+
+# 1) Broker local + bridge (el OCR AUN publica directo al server: cero
+#    interferencia). mosquitto-clients trae mosquitto_sub (verificaciones) y
+#    sqlite3 el conteo de filas del paso 5:
+sudo apt install -y mosquitto mosquitto-clients sqlite3
+sudo cp docs/ito2/mosquitto-edge.conf.ejemplo /etc/mosquitto/conf.d/monitoreo-edge.conf
+#   -> editar los DOS "jetson-01" al device_id de esta Jetson
+sudo systemctl restart mosquitto && sudo systemctl enable mosquitto
+
+# 2) Verificar el bridge y la senal de enlace — correr EN el server
+#    (ssh chuy@100.110.157.112):
+#    mosquitto_sub -h localhost -t 'monitoreo/edge/#' -v   -> "... 1" (retained)
+
+# 3) Ingesta local (pasos completos en la cabecera de la unit) — el mkdir va
+#    SIN sudo: con sudo el directorio queda de root y el servicio
+#    (User=jetson) no puede crear la BD:
+mkdir -p /home/jetson/datos/monitoreo
+cd /home/jetson/MonitoreoPediatria && \
+  /home/jetson/miniforge3/envs/ocr-monitoreo/bin/python -m persistencia.ingerir \
+  --bd /home/jetson/datos/monitoreo/vitales.db --solo-esquema
+sudo cp persistencia/vitales-ingest-edge.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now vitales-ingest-edge
+
+# 4) (por cama) El flip: BROKER=localhost en /etc/monitoreo/cama-NN.conf
+#    *** NO tocar SERVIDOR_VIDEO: el video sigue directo a MediaMTX ***
+sudo systemctl restart ocr-publicar@cama-NN
+
+# 5) Verificar el mundo nuevo:
+#    - app/dashboard en vivo como siempre (latencia indistinguible)
+#    - filas creciendo en la BD LOCAL:
+#      sqlite3 /home/jetson/datos/monitoreo/vitales.db "SELECT count(*), max(ts) FROM vitales;"
+#    - y en la BD del SERVER (via bridge) igual que antes
+# Rollback de un paso: revertir BROKER en el conf + restart de la unit.
+```
+
+**Prueba del corte** (la razón de todo esto): tirar el internet del edge >2 min con el
+OCR ciclando (Mac dormida y despierta) → la BD local sigue creciendo TODO el corte; el
+server muestra `monitoreo/edge/<device_id>/bridge = 0` (a los ~22 s de un corte
+silencioso — keepalive del bridge de 15 s); al volver el enlace, la app queda al día en
+segundos y el estado retenido del server converge con el local (`mosquitto_sub -v
+'monitoreo/estado/#'` igual en ambos lados). El hueco del server se rellena solo cuando
+llegue la Fase 2 (reenviador); mientras, una copia manual de la BD local es material de
+CONSULTA (adjuntarla aparte), **jamás** merge en la BD del server (sin dedup
+duplicaría) — y solo hacia el server, nunca a laptops, borrando la copia tras usarla
+(datos de menores, CONTEXT §2).
+
+**Corrida manual de depuración en la Jetson**: parar antes el servicio (`systemctl stop
+vitales-ingest-edge`) y pasar `--bd` fuera del working tree — los defaults crearían otra
+BD de datos de menores dentro del clon.
+
+**Volumetría/disco**: ~70–90 MB/día/cama; el pruning llega en F2 — mientras tanto,
+`df -h` en cada visita al banco.
+
 ---
 
 ## Parte 3 — Mando (Windows / visualizador)

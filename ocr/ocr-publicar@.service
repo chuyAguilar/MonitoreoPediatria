@@ -10,12 +10,12 @@
 #      variables en WorkingDirectory ni en el ejecutable):
 #        ls /home/jetson/MonitoreoPediatria/ocr/publicar.py
 #        conda run -n ocr-monitoreo which python
-#      (/home/jetson/miniconda3/... es el default PROBABLE; en aarch64 pudo ser
-#      archiconda/mambaforge.)
+#      (miniforge3 es la ruta REAL de esta Jetson — nota de campo del 15-sep
+#      en PENDIENTES; el brief original decia miniconda3.)
 #   2. Preflight (valida python del env, imports, permisos de video del usuario
 #      jetson —grupo video— y la identidad de la capturadora):
 #        cd /home/jetson/MonitoreoPediatria && \
-#          /home/jetson/miniconda3/envs/ocr-monitoreo/bin/python -m ocr.publicar --listar-dispositivos
+#          /home/jetson/miniforge3/envs/ocr-monitoreo/bin/python -m ocr.publicar --listar-dispositivos
 #   3. sudo mkdir -p /etc/monitoreo && crear /etc/monitoreo/cama-09.conf
 #      (ejemplo: docs/ito2/cama-09.conf.ejemplo; lo lee root, no el usuario).
 #   4. Instalar esta unit y recargar el manager:
@@ -47,7 +47,7 @@ Environment=PYTHONUNBUFFERED=1
 # se omite); esto lo convierte en fallo de arranque explicito. ($$ = $ literal
 # para que lo evalue el shell con el entorno ya cargado.)
 ExecStartPre=/bin/sh -c 'test -n "$${DISPOSITIVO_OCR}" && test -n "$${BROKER}" && test -n "$${DEVICE_ID}"'
-ExecStart=/home/jetson/miniconda3/envs/ocr-monitoreo/bin/python -m ocr.publicar --fuente capturadora --dispositivo ${DISPOSITIVO_OCR} --cama-id %i --device-id ${DEVICE_ID} --broker ${BROKER}
+ExecStart=/home/jetson/miniforge3/envs/ocr-monitoreo/bin/python -m ocr.publicar --fuente capturadora --dispositivo ${DISPOSITIVO_OCR} --cama-id %i --device-id ${DEVICE_ID} --broker ${BROKER}
 Restart=always
 RestartSec=5
 # argparse sale con 2 ante flags/valores malformados: un typo de config queda

@@ -5,7 +5,7 @@
 > Para el *porqué* de cada decisión ver [`DECISIONS.md`](DECISIONS.md); para reglas de
 > negocio, límites y estado WIP ver [`CONTEXT.md`](CONTEXT.md).
 
-**Última actualización:** 2026-08-22 · **Contrato de datos:** `1.1`
+**Última actualización:** 2026-09-22 · **Contrato de datos:** `1.1`
 
 ---
 
@@ -115,6 +115,29 @@ flowchart TD
 La web une video + datos porque **ambos usan el mismo `cama_id`**: datos en
 `monitoreo/vitales/cama-01`, video en el stream `/cama-01`.
 
+### 5.1 Caja negra en el edge + store-and-forward (ADR-024)
+
+Desde sep-2026 el **server es off-site** y el enlace puede caerse (minutos a horas). El
+edge NO depende de la red para no perder datos:
+
+```mermaid
+flowchart LR
+    OCR["Publicador OCR<br/>(sin cambios)"] -->|"monitoreo/# QoS1"| ML["Mosquitto LOCAL<br/>(127.0.0.1, Jetson)"]
+    ML -->|"bridge cleansession=true<br/>(re-sincroniza retained al volver)"| MS["Mosquitto server<br/>(off-site, Tailscale)"]
+    ML -->|"suscripción local"| IL["Ingesta local<br/>(persistencia/ reusada)"]
+    IL --> BDL["SQLite del edge<br/>(la caja negra: no pierde)"]
+    BDL -.->|"F2: reenviador, lotes +<br/>ACK de aplicación"| MS
+    MS -->|"live + backfill dedupeado (F2)"| BDS["SQLite del server<br/>(agregador)"]
+    MS -->|"monitoreo/edge/{device_id}/bridge<br/>retained 1/0 (will del bridge)"| APP["App/Dashboard:<br/>edge con/sin conexión"]
+```
+
+- El **live** va por el bridge en caliente (misma forma, mismos topics, mismo broker
+  final); durante un corte se pausa (inevitable) y al reconectar **converge en
+  segundos**: la suscripción fresca del bridge re-entrega los retained vigentes.
+- La **fiabilidad** vive en la BD local del edge; el server recibe el atraso por el
+  canal de backfill (Fase 2) con deduplicación — jamás por la cola del bridge.
+- El video NO se buferea (en vivo por diseño; sigue directo a MediaMTX).
+
 ---
 
 ## 6. Topología — producción multi-cama / multi-Jetson
@@ -177,6 +200,8 @@ Transporte **MQTT**; la web se construye contra el contrato, la fuente es interc
 |---|---|---|---|
 | `monitoreo/vitales/{cama_id}` | Jetson (OCR) | JSON de signos ~1 Hz | QoS 1, retained |
 | `monitoreo/estado/{cama_id}` | Jetson | online/offline del edge | QoS 1, retained |
+| `monitoreo/edge/{device_id}/bridge` | bridge del edge (`1`) / will en el broker del server (`0`) | enlace del edge con el server (ADR-024) | QoS 1, retained |
+| `monitoreo/backfill[_ack]/{device_id}` | reservados para la F2 de ADR-024 | lotes de rezago / confirmación | QoS 1, sin retain |
 
 ```json
 {
@@ -232,6 +257,9 @@ ocr/            Lectura de signos por OCR + publicacion MQTT (offline sobre imag
   mock/           Generadores de imagen mock (completo y con PNI combinada)
   tests/          pytest: mock, campos combinados, frame real, contrato, perfiles
 persistencia/   Ingesta de vitales a SQLite (ADR-021): python -m persistencia.ingerir
+                Corre en el SERVER (agregador) y, desde ADR-024, TAMBIEN en el edge
+                (ingesta local contra el mosquitto de la Jetson = caja negra local)
+  vitales-ingest-edge.service  Unit de la ingesta LOCAL del edge (ADR-024)
   almacen.py      Esquema (ancho + raw BLOB + auditoria) + AlmacenVitales (WAL, lotes)
   ingestor.py     Parseo puro del contrato + ServicioIngesta + suscriptor MQTT
   ingerir.py      CLI (corre EN el servidor como vitales-ingest.service)

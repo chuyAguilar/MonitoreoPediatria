@@ -72,15 +72,19 @@ recoge `ocr/tests` y `video/tests` — el runner de video por cama, ADR-020.)
 ## Publicar por MQTT (puente OCR → dashboard)
 
 `python -m ocr.publicar` lee un frame en bucle, lo pasa por `leer_imagen()` y publica el
-contrato por MQTT al Mosquitto del servidor, de modo que la cama aparezca en el **dashboard
-web existente** — el mismo camino que el `simulador/`. Solo transporta lo que el OCR ya
-validó (los `null` se publican como `null`; la web los muestra como "--").
+contrato por MQTT, de modo que la cama aparezca en el **dashboard web existente** — el
+mismo camino que el `simulador/`. Solo transporta lo que el OCR ya validó (los `null` se
+publican como `null`; la web los muestra como "--"). **OJO (ADR-024): en la JETSON el
+broker es LOCAL** (`--broker localhost` — el bridge lleva el live al server y la ingesta
+local persiste todo); apuntar directo al server desde la Jetson puentea la caja negra y
+recrea la pérdida de datos ante cortes. El broker remoto queda solo para bancos x86 sin
+caja negra.
 
 ```bash
-# Producción: RapidOCR lee el frame de SimCore y lo publica (requiere el motor y Mosquitto)
-python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01
+# En la JETSON (ADR-024: broker local; requiere el runbook §2.2 desplegado)
+python -m ocr.publicar --broker localhost --cama-id cama-01
 
-# Solo transporte, sin el motor real: valida MQTT/estado/web (los valores van null)
+# Banco x86 SIN caja negra (directo al server; solo pruebas fuera del edge)
 python -m ocr.publicar --broker 100.110.157.112 --cama-id cama-01 --motor plantilla
 
 # Sin broker, imprime el JSON en consola (prueba rápida)
@@ -109,8 +113,9 @@ la `FuenteCapturadora` lee el dispositivo V4L2 en vivo (MJPG 1920×1080), descar
 ~15 frames negros de arranque y valida que la resolución coincida con la del perfil:
 
 ```bash
+# (En la Jetson el broker es LOCAL — ADR-024; ver runbook §2.2)
 python -m ocr.publicar --fuente capturadora --dispositivo 35562055 \
-    --broker 100.110.157.112 --cama-id cama-09
+    --broker localhost --cama-id cama-09
 ```
 
 ### La capturadora se fija por IDENTIDAD, no por índice (ADR-018)
@@ -159,6 +164,9 @@ el mismo perfil lee ambos (test de aceptación parametrizado; FC 73 en la captur
 en el screenshot — son capturas de momentos distintos).
 
 ### Runbook: desplegar en la Jetson
+
+> Prerrequisito desde ADR-024: el broker local + bridge + ingesta local de la caja
+> negra (REPRODUCIR_DESDE_CERO.md §2.2) van ANTES del flip a `BROKER=localhost`.
 
 1. **Clonar el repo** en la Jetson (`jetson@…`, JetPack 6 / L4T r36, aarch64).
 2. **Entorno aislado con Python 3.10** — el `base` de conda es 3.13 y **no tocar el entorno

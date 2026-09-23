@@ -12,7 +12,8 @@
 #      ADR-020; ocr.dispositivos es stdlib puro) — por eso /usr/bin/python3.
 #      SI ese preflight fallara con ImportError (opencv/numpy u otro arrastre
 #      futuro), usa el env conda tambien aqui: cambia ExecStart al python de
-#      /home/jetson/miniconda3/envs/ocr-monitoreo/bin/python.
+#      /home/jetson/miniforge3/envs/ocr-monitoreo/bin/python (la ruta real de
+#      esta Jetson es miniforge3 — nota de campo del 15-sep en PENDIENTES).
 #   3. sudo mkdir -p /etc/monitoreo && crear /etc/monitoreo/cama-09.conf
 #      (ejemplo: docs/ito2/cama-09.conf.ejemplo; compartido con el OCR).
 #   4. Instalar esta unit y recargar el manager:

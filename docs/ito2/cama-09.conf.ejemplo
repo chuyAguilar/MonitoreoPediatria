@@ -27,7 +27,13 @@ DISPOSITIVO_VIDEO=usb-0:2.3
 # Identidad del edge en el contrato
 DEVICE_ID=jetson-01
 
-# Broker MQTT (vitales/estado) y host de MediaMTX (RTSP) — hoy la misma
-# maquina del servidor, pero son cosas distintas (por eso dos claves)
-BROKER=100.110.157.112
+# Broker MQTT del OCR: LOCALHOST desde ADR-024 (caja negra en el edge) — el
+# OCR publica al mosquitto local; el bridge reenvia el live al server y la
+# ingesta local persiste todo. NO volver a apuntar al server directo: eso
+# recrea la perdida de datos ante cortes (el hueco de 4.5 dias).
+BROKER=localhost
+
+# Host de MediaMTX (RTSP) del video: SIGUE siendo el server — el video es en
+# vivo y NO se buferea (fuera de alcance de ADR-024). OJO: NO "corregir" esta
+# clave a localhost al editar BROKER; son caminos distintos a proposito.
 SERVIDOR_VIDEO=100.110.157.112

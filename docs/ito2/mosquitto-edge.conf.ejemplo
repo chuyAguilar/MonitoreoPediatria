@@ -1,0 +1,67 @@
+# /etc/mosquitto/conf.d/monitoreo-edge.conf — mosquitto LOCAL de la Jetson
+# (ADR-024, Fase 1: caja negra en el edge + bridge del live al server).
+# Ajusta los DOS "jetson-01" al device_id de ESTA Jetson antes de instalar.
+#
+# El OCR publica a localhost; de aqui salen DOS caminos:
+#   - el LIVE: este bridge reenvia en caliente al broker del server off-site
+#   - la FIABILIDAD: la ingesta local (vitales-ingest-edge) escribe TODO a la
+#     BD SQLite local — ese es el canal que no pierde, no este bridge.
+
+# REQUISITO de privacidad (CONTEXT 2, ADR-024): SOLO loopback. El patron del
+# server (0.0.0.0) aqui expondria vitales de menores a toda la LAN del
+# hospital. OJO: allow_anonymous es GLOBAL del broker (per_listener_settings
+# false, el default) — hoy es aceptable UNICAMENTE porque el UNICO listener
+# es loopback (el bridge es conexion SALIENTE, no abre listener). Antes de
+# anadir OTRO listener, este conf exige revisar auth (pendiente ADR-024).
+listener 1883 127.0.0.1
+allow_anonymous true
+
+# Defensa contra el retained gigante (leccion de ADR-021: paho lo buferea
+# entero en RAM ANTES del callback -> OOM + crash-loop de la ingesta local;
+# el TOPE de la ingesta descarta DESPUES, no protege de esto). Mismo limite
+# que el broker del server.
+message_size_limit 65536
+
+# La cola de la sesion persistente de la ingesta LOCAL (clean_session=False,
+# ADR-021): GENEROSA a proposito — protege sus restarts/deploys. JAMAS
+# acortarla "para el bridge": max_queued_messages es GLOBAL del broker, y una
+# cola llena descarta lo NUEVO conservando lo VIEJO.
+max_queued_messages 20000
+persistence true
+persistence_location /var/lib/mosquitto/
+
+# ---------------- bridge al server off-site (el LIVE) ----------------
+connection al-server
+address 100.110.157.112:1883
+# UNICO por edge: dos Jetsons con este conf copiado sin cambiar el clientid
+# se expulsarian mutuamente en el server (takeover) y el live de AMBAS
+# moriria intermitente.
+remote_clientid bridge-jetson-01
+topic monitoreo/# out 1
+bridge_protocol_version mqttv311
+
+# La FRESCURA del live (ADR-024): cleansession true compra SOLO el
+# no-backlog — al caer el enlace NO se encola nada para el bridge (el canal
+# de fiabilidad es la BD local), asi que al volver no hay cola vieja por
+# delante. La CONVERGENCIA del estado la da mosquitto de forma INCONDICIONAL:
+# en cada (re)conexion del bridge re-publica al remoto los RETAINED vigentes
+# de los topics out (bridge__on_connect -> retain__queue; no depende de
+# cleansession ni de suscripcion alguna). Juntas: live fresco + estado del
+# server convergido en segundos.
+cleansession true
+restart_timeout 5
+# Deteccion de muerte SILENCIOSA del enlace en ~22 s (coherente con el
+# keepalive del OCR, ADR-022); el default de bridge (60 s) tardaria ~90 s.
+keepalive_interval 15
+
+# Deteccion de "edge sin conexion" desde la Fase 1 (ADR-024): el BRIDGE
+# publica retained 1 en este topic del broker REMOTO al conectar, y registra
+# alli su Last Will para que el SERVER publique retained 0 si el enlace cae
+# (corte de internet O Jetson muerta entera). Topic ADITIVO al contrato
+# (docs/ito2/CONTRATO_DATOS.md); la app/el server derivan de aqui "todas las
+# camas de este edge sin conexion". Sustituye al will del OCR como senal
+# REMOTA (el will del OCR ahora vive en este broker local y cubre la muerte
+# del proceso OCR con Jetson viva). Nota: sin valor retained = edge que aun
+# no ha conectado nunca — tratar como DESCONOCIDO, jamas como conectado.
+notifications true
+notification_topic monitoreo/edge/jetson-01/bridge

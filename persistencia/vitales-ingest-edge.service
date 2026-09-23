@@ -1,0 +1,56 @@
+# Ingesta LOCAL del edge (ADR-024, Fase 1): escribe TODO lo que el OCR
+# publica al broker local en la BD SQLite de la Jetson — el canal que NO
+# pierde datos cuando el enlace al server se cae. Reusa persistencia/ tal
+# cual (el codigo endurecido de ADR-021); cambia solo la config.
+#
+# ANTES de enable --now (runbook: REPRODUCIR_DESDE_CERO.md, seccion 2.2):
+#   0. Reloj sincronizado (el recibido_en de esta BD ES la linea temporal del
+#      historico): timedatectl -> "System clock synchronized: yes".
+#   1. mosquitto local + bridge instalados y verificados
+#      (docs/ito2/mosquitto-edge.conf.ejemplo).
+#   2. mkdir -p /home/jetson/datos/monitoreo   <- SIN sudo (como el usuario
+#      jetson): con sudo quedaria propiedad de root y el servicio
+#      (User=jetson) no podria crear la BD — bucle de reinicio en el primer
+#      arranque. (Datos de pacientes: FUERA del working tree de git — un
+#      git clean -fdx borra hasta lo ignorado.)
+#   3. Verificar esquema y permisos (tambien SIN sudo):
+#      cd /home/jetson/MonitoreoPediatria && \
+#        /home/jetson/miniforge3/envs/ocr-monitoreo/bin/python -m persistencia.ingerir \
+#        --bd /home/jetson/datos/monitoreo/vitales.db --solo-esquema
+#      (el env conda del OCR ya trae paho-mqtt; miniforge3 es la ruta REAL de
+#      esta Jetson — nota de campo del 15-sep en PENDIENTES; si difiere,
+#      ajustar ExecStart: systemd no expande variables ahi.)
+#   4. sudo cp persistencia/vitales-ingest-edge.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#
+# UNA sola instancia local (client_id fijo "ingesta-vitales" con sesion
+# persistente — igual que en el server, pero contra ESTE broker local).
+# CORRIDA MANUAL de depuracion: parar antes el servicio (systemctl stop
+# vitales-ingest-edge) Y pasar --bd fuera del working tree — los defaults de
+# ingerir.py crearian data/vitales.db DENTRO del clon (otra BD de datos de
+# menores expuesta a git clean). --solo-esquema no conecta ni escribe datos.
+# Para DETENER: systemctl stop (vacia el lote pendiente antes de salir).
+
+[Unit]
+Description=Ingesta local de vitales del edge a SQLite (ADR-024)
+After=network.target mosquitto.service
+Wants=mosquitto.service
+# Patron del edge (ADR-023): el supervisor jamas se rinde; RestartSec=5
+# evita el bucle caliente. Este servicio ES el canal de fiabilidad.
+StartLimitIntervalSec=0
+
+[Service]
+User=jetson
+WorkingDirectory=/home/jetson/MonitoreoPediatria
+Environment=INGESTA_BROKER=localhost
+Environment=INGESTA_BD=/home/jetson/datos/monitoreo/vitales.db
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/jetson/miniforge3/envs/ocr-monitoreo/bin/python -m persistencia.ingerir
+Restart=always
+RestartSec=5
+# argparse sale con 2 ante config malformada: parado y visible, no flapeando
+RestartPreventExitStatus=2
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

@@ -27,6 +27,13 @@ Las vitales viajan por **MQTT** (broker Mosquitto en el servidor). Encaja con mu
 |--------------|---------|-----------|------------------|
 | `monitoreo/vitales/{cama_id}` | edge | JSON de numéricos (~1 Hz) | QoS 1, retained |
 | `monitoreo/estado/{cama_id}` | edge | online/offline, batería del edge, etc. | QoS 1, retained |
+| `monitoreo/edge/{device_id}/bridge` | `1`: el bridge del edge al conectar · `0`: el broker del server vía will del bridge, al caer el enlace | estado del ENLACE del edge (ADR-024) — `0` = edge sin conexión (corte o Jetson caída); todas sus camas quedan sin datos frescos. **Sin valor retained = edge que aún no ha conectado nunca: tratar como DESCONOCIDO, jamás como conectado** | QoS 1, retained |
+| `monitoreo/backfill/{device_id}` | edge (reenviador, ADR-024 F2) | lote de mensajes crudos rezagados para el agregador — NO lo consume la web/app | QoS 1, sin retain |
+| `monitoreo/backfill_ack/{device_id}` | server (agregador, ADR-024 F2) | confirmación de lote persistido (avanza el cursor del edge) | QoS 1, sin retain |
+
+> Extensión **aditiva** (regla de CONTEXT §6): los topics nuevos de ADR-024 no cambian
+> forma ni unidades de los existentes. `monitoreo/edge/…` existe desde la Fase 1;
+> los dos de `backfill` se reservan aquí y entran en servicio con la Fase 2.
 
 - **retained**: el broker guarda el último mensaje, así la web muestra valores apenas se conecta.
 - La web se suscribe a `monitoreo/vitales/+` para recibir **todas** las camas, o a una sola para el detalle.

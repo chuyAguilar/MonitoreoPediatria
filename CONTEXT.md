@@ -5,7 +5,7 @@
 > debe respetar cualquier IA/colaborador que toque el código.
 > Complementa [`ARCHITECTURE.md`](ARCHITECTURE.md) (el *qué*) y [`DECISIONS.md`](DECISIONS.md) (el *porqué*).
 
-**Última actualización:** 2026-09-14
+**Última actualización:** 2026-09-22
 
 ---
 
@@ -44,6 +44,16 @@
   La **BD de vitales** (ADR-021) es datos de pacientes: está en `.gitignore` (`data/`,
   `*.db*`) y en el servidor vive **fuera del working tree** de git (un `git clean -fdx`
   borra hasta lo ignorado). Los logs de la ingesta jamás vuelcan payloads completos.
+- **Datos fuera de sitio (ADR-024)**: el server es off-site — el transporte es
+  EXCLUSIVAMENTE Tailscale (WireGuard, cifrado extremo a extremo); el contrato no lleva
+  PII (`cama_id` es pseudónimo; el mapeo cama↔paciente no sale del hospital). La **BD
+  local del edge** es otra copia física de datos de menores: fuera del working tree, en
+  una Jetson cuyo acceso (ssh `jetson`, acceso físico en el hospital) debe controlarse;
+  copias manuales SOLO hacia el server y borradas tras uso. El broker local del edge
+  escucha SOLO `127.0.0.1` (invariante — el patrón `0.0.0.0` del server expondría los
+  vitales a la LAN del hospital). El pendiente de **auth MQTT** incluye desde ADR-024 a
+  los dos clientes nuevos del server: el bridge del edge y el reenviador (F2). Cifrado
+  de disco de la Jetson y consentimiento institucional: pendientes de despliegue.
 - **Estado actual = desarrollo, no endurecido.** Hoy:
   - Mosquitto con `allow_anonymous true` (sin auth).
   - Web servida por `http` (no `https`) dentro de la tailnet.
@@ -109,7 +119,7 @@ listener `9001` websockets). MediaMTX y la web corren como servicios systemd en 
 `RTSP_SERVIDOR` (host de MediaMTX, def. `100.110.157.112`). Sin dependencias pip; requiere
 el binario `ffmpeg`. Detalle en ADR-020 y el runbook.
 
-### Ingesta de vitales a SQLite (servidor)
+### Ingesta de vitales a SQLite (servidor y edge, ADR-021/024)
 
 `python -m persistencia.ingerir` (servicio `vitales-ingest`). Envs, leídos al ejecutar:
 
@@ -121,7 +131,10 @@ el binario `ffmpeg`. Detalle en ADR-020 y el runbook.
 | `INGESTA_LOTE` | `100` | N mensajes que fuerzan el vaciado |
 | `INGESTA_INTERVALO` | `5.0` | T segundos entre vaciados |
 
-Detalle en ADR-021 y el runbook §1.4.
+Misma CLI y envs en el **edge** (ADR-024): corre como `vitales-ingest-edge` con
+`INGESTA_BROKER=localhost` (el broker local de la Jetson) e
+`INGESTA_BD=/home/jetson/datos/monitoreo/vitales.db`. Detalle en ADR-021/024 y el
+runbook §1.4 (server) / §2.2 (edge).
 
 ---
 
@@ -193,6 +206,17 @@ Detalle en ADR-021 y el runbook §1.4.
   `persistencia/vitales-ingest.service`; BD en `/home/chuy/datos/monitoreo/`, fuera del
   clon; `message_size_limit` y `max_queued_messages` en Mosquitto) y verificación en el
   servidor.
+- **Caja negra en el edge + store-and-forward** (iteración 13, ADR-024): el server es
+  OFF-SITE con enlace intermitente (hueco de 4.5 días del 17–20 sep) — el edge ya no
+  depende de la red: mosquitto LOCAL en la Jetson (solo 127.0.0.1), el OCR publica a
+  localhost (solo config, cero código en el camino vivo), un **bridge**
+  `cleansession true` lleva el live al server (re-sincroniza retained al reconectar) y
+  la **ingesta local** (persistencia/ reusada) persiste TODO en la BD del edge.
+  `monitoreo/edge/{device_id}/bridge` (retained 1/0, will del bridge en el server) =
+  señal de edge sin conexión desde F1. **Fase 1 entregada** (confs + unit + docs;
+  despliegue: Dr. Milton, runbook §2.2 — incluye chequeo NTP). **Fase 2 en
+  construcción**: reenviador (cursor + lotes por bytes + ACK de aplicación) y agregador
+  con dedup null-safe auditado + pruning del edge.
 - **Supervisión systemd del edge** (iteración 12, ADR-023): units templated
   `ocr-publicar@.service` / `video-transmitir@.service` (instancia = cama) con
   `Restart=always` + `StartLimitIntervalSec=0` (el OCR sale a propósito ante frame
