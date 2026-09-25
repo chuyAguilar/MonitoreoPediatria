@@ -32,6 +32,7 @@
 | ADR-022 | Last Will (LWT) en el cliente MQTT del OCR: estado honesto ante muerte súbita del edge | Aceptada |
 | ADR-023 | Supervisión systemd del edge: units templated con límite de arranque desactivado | Aceptada |
 | ADR-024 | Caja negra en el edge + store-and-forward: broker local, bridge para el live, backfill con ACK | Aceptada |
+| ADR-025 | Una lectura null no es normal: la app congela la alerta | Aceptada |
 
 ---
 
@@ -1295,3 +1296,60 @@ bloqueado 1 min → al desbloquear, valores que se actualizan cada ~1 s o "Sin d
 corte; `SERVIDOR_VIDEO` intacto (video igual).
 Aceptación F2: corte → reconexión → el hueco del server se rellena solo (dedupeado,
 auditado) y el cursor avanza solo con ACKs.
+
+→ Actualizado por ADR-025 (25-sep-2026): un signo en null no se evalúa y su alerta queda congelada (complementa §7).
+
+---
+
+## ADR-025 — Una lectura null no es normal: la app congela la alerta
+
+**Estado:** Aceptada (25-sep-2026) · entregada como F1.3 en el mismo APK 1.0.6 / versionCode 2
+de la app Flet (rama `f1.1-enlace-edge` del Front).
+
+**Contexto.** El OCR publica un signo en `null` + confianza 0 cuando no lee el dígito,
+cuando la confianza es baja o cuando el valor cae **fuera del rango de plausibilidad** del
+perfil (ADR-013/015; `ocr/lector.py`) — nunca inventa un número. La app evaluaba ese `null`
+como NORMAL: `fuera_de_rango(None, …)` devolvía False, así que una vital con la FC, SpO2,
+FR o Temp en `null` apagaba una alerta activa (pulso, banner) y la siguiente lectura
+anormal la volvía a disparar con audio y notificación. Justo en el valor más extremo — el
+que el OCR descarta por implausible — la alerta se "resolvía" sola. La PNI ya quedaba
+congelada.
+
+**Decisión (Dr. Milton, 25-sep-2026): una lectura ilegible jamás se interpreta como
+normal; el `null` CONGELA la alerta.** Un signo en `null` — o ausente o malformado en el
+mensaje, que la app trata igual: un `valor` que no es un número finito (texto, booleano,
+NaN, infinito) o una PNI cuyos `sis`/`dia` no son enteros — se pinta `--` gris y NO se
+evalúa: su alerta queda
+exactamente como estaba (ni se apaga ni se enciende, ni hay aviso nuevo al banner). La
+siguiente lectura numérica evalúa normal: en rango apaga la alerta, fuera de rango la
+enciende. Mismo criterio para todos los signos, como ya tenía la PNI. `fuera_de_rango(None)`
+devuelve `None` ("no se evalúa"), jamás False.
+
+**Consecuencias.**
+- (−) Con una alerta activa, esta puede quedar **roja con `--`** mientras el OCR no lea el
+  signo; cerrar la franja no la despide mientras otro signo se siga evaluando, y cambiar
+  de perfil tampoco re-evalúa un signo en `null`.
+- (−) En SimCore la SpO2 100 % sale siempre `null` (la caja del perfil es de 2 dígitos,
+  ADR-015): una alerta de SpO2 que se resuelve a 100 % queda roja con `--` hasta que se lea
+  ≤99. Esperado en banco; lo corrige la caja de 3 dígitos (PENDIENTES 🟡).
+- (−) La mitad simétrica: SIN alerta previa, un `null` persistente — de un signo o de
+  todos (sonda retirada, cámara desalineada, fuente equivocada como en ADR-018, pisos de
+  plausibilidad) — deja la tarjeta **verde con `--`**, sin alerta y sin "Sin datos": el
+  timeout de ADR-024 §7 mide si llegan vitales, no si se pueden leer. Un aviso técnico
+  "Sin lectura" tras N s queda como decisión clínica pendiente (PENDIENTES 🟡).
+- (−) Los pisos de plausibilidad del perfil (SimCore: FC 20, SpO2 50, FR 3) convierten en
+  `null` valores reales extremos (FR 0 = apnea, SpO2 <50, FC <20): desde un estado normal
+  la app no alerta. Bajar esos pisos es decisión clínica pendiente (PENDIENTES 🟡) y tiene
+  un **prerrequisito**: la caja de 3 dígitos de SpO2 — con el piso bajado y la caja de 2
+  dígitos, un 100 mal leído como "10" pasaría como SpO2 10 % = falsa alarma cada vez que
+  el paciente esté al 100.
+- (+) Una alerta nunca se apaga por falta de lectura, y una lectura intermitente ya no
+  re-dispara audio/notificación: solo hay aviso en una transición real por un número.
+
+**Aceptación**: tests con la tarjeta real — alerta activa → `null` → sigue activa con `--`
+y sin `al_alerta(False)` → valor normal → se apaga → fuera de rango → se enciende; `null`
+sin alerta previa → `--` y sin alerta, y la primera lectura anormal después sí alerta;
+`fuera_de_rango` jamás recibe `None`; por el camino del dashboard, una vital que cuenta con
+el signo en `null`, ausente o malformado (NaN, texto, booleano, infinito; PNI no entera o
+parcial) no apaga una alerta activa ni pinta basura. Fallan contra `f8705cd` (F1.2) y pasan con F1.3. Banco: con SimCore, la
+SpO2 100 se ve `--` (runbook §2.2).

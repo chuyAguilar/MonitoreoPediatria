@@ -5,7 +5,7 @@
 > Para el *porqué* de cada decisión ver [`DECISIONS.md`](DECISIONS.md); para reglas de
 > negocio, límites y estado WIP ver [`CONTEXT.md`](CONTEXT.md).
 
-**Última actualización:** 2026-09-22 · **Contrato de datos:** `1.1`
+**Última actualización:** 2026-09-25 · **Contrato de datos:** `1.1`
 
 ---
 
@@ -205,7 +205,7 @@ capacidad = otra Jetson. El servidor y la web no cambian: descubren camas por lo
 | **MediaMTX** | Servidor | Ingesta RTSP → sirve WebRTC | `8554` RTSP in, `8889` WHEP out |
 | **Web estática** | Servidor | Sirve el dashboard (systemd `dashboard`) | `8080` |
 | **Dashboard** | Navegador (mando) | Next.js export estático, grid de camas | — |
-| **App Flet (móvil)** | Teléfonos (repo aparte) | **Consumidor principal**: alertas + tarjetas por cama. Cliente MQTT del broker del server, suscrito SOLO a `vitales/+`, `estado/+` y `edge/+/bridge` (nunca `monitoreo/#`); marca "Sin conexión" las camas de un edge con enlace `0` y "Sin datos" las que pasan más de 10 s sin una vital en vivo (timeout de datos, F1.2; prioridad Sin conexión > Sin datos > estado — ADR-024 §7) | `1883` (cliente) |
+| **App Flet (móvil)** | Teléfonos (repo aparte) | **Consumidor principal**: alertas + tarjetas por cama. Cliente MQTT del broker del server, suscrito SOLO a `vitales/+`, `estado/+` y `edge/+/bridge` (nunca `monitoreo/#`); marca "Sin conexión" las camas de un edge con enlace `0` y "Sin datos" las que pasan más de 10 s sin una vital en vivo (timeout de datos, F1.2; prioridad Sin conexión > Sin datos > estado — ADR-024 §7); un signo en `null` no se evalúa y su alerta queda congelada (ADR-025) | `1883` (cliente) |
 
 Toda la comunicación entre máquinas va cifrada sobre **Tailscale**.
 

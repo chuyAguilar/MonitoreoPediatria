@@ -375,6 +375,11 @@ plano), o aparece "Sin datos" en ≤2 s y se recupera sola; **NUNCA números fij
 de ~10 s**. Si se puede ver el log de la app, al arrancar dice `timeout de datos con
 reloj CLOCK_BOOTTIME`.
 
+**Esperado con SimCore (no es un bug)**: con SimCore, la SpO2 100 se ve `--`; una alerta
+de SpO2 activa queda roja hasta que se lea ≤99. Es lo esperado por ADR-025 (un `null` no
+es normal: congela la alerta) más la caja de 2 dígitos del perfil de SpO2 (ADR-015). En
+general, cualquier signo que el OCR no lea se ve `--` y conserva su alerta tal como estaba.
+
 **Corrida manual de depuración en la Jetson**: parar antes el servicio (`systemctl stop
 vitales-ingest-edge`) y pasar `--bd` fuera del working tree — los defaults crearían otra
 BD de datos de menores dentro del clon.

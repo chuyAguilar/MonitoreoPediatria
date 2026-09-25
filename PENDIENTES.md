@@ -20,7 +20,8 @@
   — **Fase 1 + F1.1 + F1.2 ENTREGADAS en el repo** (broker local 127.0.0.1 + bridge
   `cleansession true` con señal `monitoreo/edge/{device_id}/bridge` + ingesta local
   reusando `persistencia/` + flip `BROKER=localhost`; F1.1: el conf ya ARRANCA —
-  validado arrancándolo; F1.2: timeout de datos en la app). Falta: (a) **la app 1.0.6
+  validado arrancándolo; F1.2: timeout de datos en la app; F1.3: el null congela la
+  alerta, ADR-025). Falta: (a) **la app 1.0.6
   en TODOS los teléfonos** (ítem [front] de abajo) — requisito ANTES del paso 1; (b)
   **despliegue F1 por Dr. Milton** (runbook §2.2 — chequeo NTP, verificación
   cuantitativa, prueba del corte con la app marcando "Sin conexión" en ≤25 s, prueba
@@ -39,27 +40,37 @@
   aplicarse tal cual a `estado`** (dos will durante un corte llegarían como uno y el
   histórico ocultaría una desconexión). Al retomar F2: limitarlo a `vitales` o
   deduplicar por multiplicidad (o por el id del edge).
-- [ ] **[front] App 1.0.6: blindaje MQTT + enlace del edge + timeout de datos** (F1.1 y
-  F1.2, ADR-024 §7) — código en la rama `f1.1-enlace-edge` del repo del Front
-  (suscripción explícita a `vitales/+`, `estado/+`, `edge/+/bridge`; despacho por topic
-  con todo el callback blindado; estado propio "Sin conexión": punto ámbar, valores
-  `--`, alertas congeladas; vitales con `ts` fuera de ±30 s = `--`, jamás pintadas ni
-  evaluadas; "Sin datos" tras 10 s sin una vital en vivo, con prioridad Sin conexión >
-  Sin datos > estado; versión visible en el header). Falta: revisión y merge de Dr.
-  Milton, build del APK (versionCode 2) e instalación verificada en TODOS los teléfonos.
-- [ ] **[front] DECISIÓN (Dr. Milton): una lectura `null` del OCR BORRA la alerta
-  activa de fc/spo2/fr/temp** (hallazgo de la revisión de F1.2; preexistente, fuera de
-  su alcance). `fuera_de_rango(None, …)` devuelve False (`datos/perfiles.py`), así que
-  una vital con `"valor": null` apaga el pulso, pone `estados_alerta[signo]=False` y
-  manda `al_alerta(cama, False)`: la franja puede desaparecer, y al volver a leerse el
-  valor se re-dispara audio/notificación. El OCR emite `null` cuando no lee el dígito,
-  con confianza baja **o fuera del rango de plausibilidad** (`ocr/lector.py`): justo en
-  el valor más extremo la alerta se "resuelve" sola. El PNI, en cambio, ya queda
-  congelado. Propuesta: en `BedCard.actualizar_valor`, con `valor is None` no evaluar
-  (pintar `--` y dejar la alerta de ese signo congelada, como "Sin datos"), con tests;
-  registrar la semántica en ADR-024 (aditivo).
+- [ ] **[front] App 1.0.6: blindaje MQTT + enlace del edge + timeout de datos + null
+  congela** (F1.1 y F1.2, ADR-024 §7; F1.3, ADR-025) — código en la rama
+  `f1.1-enlace-edge` del repo del Front (suscripción explícita a `vitales/+`,
+  `estado/+`, `edge/+/bridge`; despacho por topic con todo el callback blindado; estado
+  propio "Sin conexión": punto ámbar, valores `--`, alertas congeladas; vitales con `ts`
+  fuera de ±30 s = `--`, jamás pintadas ni evaluadas; "Sin datos" tras 10 s sin una
+  vital en vivo, con prioridad Sin conexión > Sin datos > estado; un signo en `null`
+  no se evalúa y su alerta queda congelada; versión visible en el header). Falta:
+  revisión y merge de Dr. Milton, build del APK (versionCode 2) e instalación
+  verificada en TODOS los teléfonos.
 
 ## 🟡 Media
+
+- [ ] **[back/clínico] Pisos de plausibilidad del perfil vs. valores reales extremos**
+  (sin código; decisión clínica de Dr. Milton, a tomar con el perfil del uMEC12 y ANTES
+  de cualquier uso clínico — ADR-025). Los pisos del perfil SimCore (FC 20, SpO2 50,
+  FR 3; `ocr/perfiles/simcore/simcore.json`) convierten en `null` valores reales
+  extremos — FR 0 = apnea, SpO2 <50, FC <20 —, y como un `null` no se evalúa, desde un
+  estado normal la app nunca alerta por ellos. Trade-off: esos mismos pisos bloquean
+  lecturas con un dígito perdido (97 → "7" = falsa alarma). **Prerrequisito: el ítem
+  de la caja de 3 dígitos de SpO2 (abajo)** — si se baja el piso de SpO2 sin arreglar
+  antes la caja, el 100 mal leído como "10" pasaría como SpO2 10 % = falsa alarma cada
+  vez que el paciente esté al 100. Evaluar en la misma decisión un aviso técnico "Sin
+  lectura" tras N s de `null` persistente (sonda retirada, cámara desalineada, fuente
+  equivocada): hoy, sin alerta previa, la tarjeta queda verde con `--` mientras dure.
+- [ ] **[back] Caja de 3 dígitos para la SpO2 en el perfil del OCR** (ADR-015; nota del
+  perfil SimCore): la caja actual es de 2 dígitos y la SpO2 100 % sale siempre `null`;
+  con ADR-025, una alerta de SpO2 que se resuelve a 100 % queda roja con `--` hasta que
+  se lea ≤99 (aceptado para el banco). **Es PRERREQUISITO del ítem de los pisos de
+  plausibilidad (arriba):** con la caja de 2 dígitos, bajar el piso de SpO2 haría pasar
+  un 100 mal leído como "10" = SpO2 10 %, falsa alarma. Revisar con capturas en vivo.
 
 - [ ] **[edge] Medir la memoria del OCR bajo systemd y fijar `MemoryMax`** en
   `ocr-publicar@.service` (era sub-tarea del supervisor systemd; diferida a propósito
@@ -146,6 +157,14 @@
   IA; multi-cama en vivo.
 
 ## ✅ Hecho reciente (contexto)
+
+- [x] **[front] DECISIÓN: una lectura `null` del OCR borraba la alerta activa** de
+  FC/SpO2/FR/Temp (hallazgo de la revisión de F1.2, preexistente) — **cerrada**
+  (25-sep, decisión de Dr. Milton) con **F1.3 / ADR-025**: una lectura ilegible jamás
+  se interpreta como normal; el `null` (o el signo ausente/malformado: `valor` que no es
+  un número finito, PNI no entera) se pinta `--`, no se evalúa y su alerta queda
+  congelada; `fuera_de_rango(None)` → `None`. La
+  semántica quedó en ADR-025 (no en ADR-024, como proponía el ítem).
 
 - [x] **[front] DECISIÓN del apagón de la Jetson → cama verde con `--`** (hallazgo ALTA
   de la revisión de F1.1, ADR-024 §4) — **cerrada** (25-sep, decisión #1 de Dr.

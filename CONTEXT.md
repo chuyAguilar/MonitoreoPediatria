@@ -5,7 +5,7 @@
 > debe respetar cualquier IA/colaborador que toque el código.
 > Complementa [`ARCHITECTURE.md`](ARCHITECTURE.md) (el *qué*) y [`DECISIONS.md`](DECISIONS.md) (el *porqué*).
 
-**Última actualización:** 2026-09-22
+**Última actualización:** 2026-09-25
 
 ---
 
@@ -17,6 +17,9 @@
 - **El dato puede ser erróneo.** Con OCR la lectura es *falible* por diseño. Los valores llevan
   `confianza` y se validan por rango; el sistema nunca debe presentar una lectura dudosa como
   certera.
+- **Una lectura ilegible (null) jamás se interpreta como normal.** Un signo que el OCR no
+  pudo leer (o que no llegó) se muestra `--` y NO se evalúa: una alerta activa queda como
+  estaba, nunca se "resuelve" por falta de lectura (ADR-025).
 - **Ni parcial ni incoherente.** La presión (PNI) se publica con sis/dia/media completas y en
   orden fisiológico, o no se publica. Un trío imposible es tan engañoso como uno incompleto, y
   como los rangos de los tres componentes se solapan, cada número puede ser plausible por
@@ -221,9 +224,12 @@ runbook §1.4 (server) / §2.2 (edge).
   duplicada — y blindó la app Flet 1.0.6, que se congelaba con el retained del bridge y
   no leía el enlace; ahora marca "Sin conexión" y no pinta vitales con `ts` de más de
   30 s). F1.2 cerró la limitación del apagón (ADR-024 §4) con un **timeout de datos en
-  la app**: más de 10 s sin una vital en vivo → "Sin datos" (nunca verde sin datos),
-  con prioridad Sin conexión > Sin datos > estado; cubre también el OCR colgado y la
-  desconexión silenciosa del teléfono. Despliegue: Dr. Milton, runbook §2.2 — con el
+  la app**: más de 10 s sin una vital en vivo → "Sin datos" (nunca verde sin vitales
+  en vivo; una vital que llega con signos `null` sí deja el punto verde con `--`,
+  ADR-025), con prioridad Sin conexión > Sin datos > estado; cubre también el OCR
+  colgado y la desconexión silenciosa del teléfono. En el mismo APK 1.0.6 va **F1.3
+  (ADR-025)**: un signo en `null` no se evalúa y su alerta queda congelada — una lectura
+  ilegible jamás se interpreta como normal. Despliegue: Dr. Milton, runbook §2.2 — con el
   **paso previo de la app 1.0.6 verificada en TODOS los teléfonos** y el chequeo NTP.
   **Fase 2 en pausa** (diseño aprobado: reenviador + agregador con dedup + pruning)
   hasta que F1 esté desplegada — se construye sobre estas mismas confs.
