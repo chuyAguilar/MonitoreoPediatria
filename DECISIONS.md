@@ -941,6 +941,8 @@ servicio sigue; lote vacía por N y por T; WAL activo; SIGTERM vacía el pendien
 creciendo. En dev: `pytest` (suite canónica) y `compileall` limpios. Despliegue (alfred):
 filas visibles con `sqlite3 vitales.db "SELECT count(*), max(ts) FROM vitales;"`.
 
+→ Actualizado por ADR-024 §5 (22-sep-2026): dedup del canal backfill (enmienda al §7).
+
 ---
 
 ## ADR-022 — Last Will (LWT): estado honesto ante muerte súbita del edge
@@ -1009,6 +1011,8 @@ del runner lo delata: "desconexiones inmediatas repetidas"). El apagado limpio D
 on_connect antes de la ventana del sleep: una reconexión ahí re-publicaría online para
 una cama apagada (invariante estructural, no de rebote: mantener el min_delay de
 reconexión por encima de la ventana de cierre).
+
+→ Actualizado por ADR-024 §4 y §7 (22 y 25-sep-2026): el will del OCR pasa al broker local; el límite (a) del §6 queda cubierto en la app.
 
 ---
 
@@ -1082,9 +1086,6 @@ cabecera de cada unit + `ocr/README.md` §Jetson.
    `MemoryMax` por ahora: el techo del OCR (onnxruntime) se fija tras medir en banco —
    decisión, no olvido. El perfil de ROIs va hoy por default; al llegar un segundo
    modelo de monitor migra al conf por cama (no a la unit).
-   *Enmienda (ADR-024 §1, F1.1):* `ocr-publicar@` pasa a `After=`/`Wants=`
-   `mosquitto.service` — desde el flip el OCR publica al broker LOCAL; la tailnet deja
-   de ser su dependencia de datos (la sigue necesitando el video).
 
 **Aceptación**: units revisables en el repo (systemd no corre en el sandbox); SIGTERM →
 offline limpio con tests (los primeros tests de señales de la casa) y suite verde; banco
@@ -1094,12 +1095,14 @@ ruido esperado de la tailnet subiendo). El by-path de la webcam del banco quedó
 `usb-0:2.3` (listado en vivo; la tabla puerto↔cama se corrigió de 2.2 y falta etiquetar
 el puerto físico).
 
+→ Actualizado por ADR-024 §1 (22-sep-2026): orden de arranque de `ocr-publicar@` (§6).
+
 ---
 
 ## ADR-024 — Caja negra en el edge + store-and-forward al server off-site
 
-**Estado:** Aceptada (sep 2026) · Fase 1 + F1.1 entregadas (despliegue pendiente,
-runbook §2.2); Fase 2 diseñada y aprobada, **EN PAUSA** hasta desplegar F1.
+**Estado:** Aceptada (sep 2026) · Fase 1 + F1.1 + F1.2 entregadas (despliegue
+pendiente, runbook §2.2); Fase 2 diseñada y aprobada, **EN PAUSA** hasta desplegar F1.
 
 **Contexto.** El server pasó a ser **off-site** con enlace intermitente (cortes de
 minutos a horas) y los hospitales pueden no tener internet. El OCR publicaba QoS 1
@@ -1122,7 +1125,9 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    La unit `ocr-publicar@` pasa a `After=`/`Wants=mosquitto.service` (depende del broker
    local; **Wants y no Requires**, para que un restart del broker no detenga al OCR —
    su cliente reconecta solo, ADR-022); se re-instala en el paso 4 del runbook.
-   Enmienda el orden de arranque de ADR-023 §6.
+   Enmienda el orden de arranque de ADR-023 §6: desde el flip la tailnet deja de ser la
+   dependencia de DATOS del OCR (la sigue necesitando el video, que va directo a
+   MediaMTX).
 2. **El live = bridge local→remoto con `cleansession true`** (`topic monitoreo/# out 1`,
    `remote_clientid` único por edge). La frescura post-corte NO se logra con colas:
    `max_queued_messages` es GLOBAL del broker (acortarlo caparía la cola de la sesión
@@ -1158,7 +1163,8 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    viva (local → propagado por el bridge). El diagnóstico de takeover inter-edge que se
    pierde (cada OCR habla con SU broker) lo compensa el agregador en F2: aviso +
    `eventos_ingesta` si una misma `cama_id` llega de dos `device_id` en ventana corta.
-   **Limitación conocida — apagón de la Jetson (hallazgo ALTA de la revisión de F1.1):**
+   **Limitación del apagón de la Jetson (hallazgo ALTA de la revisión de F1.1; CERRADA
+   en la app por F1.2):**
    el will del OCR vive ahora en el broker LOCAL y muere con él. Durante el apagón el
    will del bridge da `0` y la app marca "Sin conexión" (correcto). Al volver la
    energía, el broker local restaura de su disco el estado `online` y las vitales
@@ -1168,11 +1174,15 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    `ocr.publicar` sale con 1 ANTES de conectar MQTT y systemd reintenta sin publicar
    jamás un offline), la cama queda con el `online` viejo: la app ya NO pinta las
    vitales viejas (frescura, §7), pero el punto queda **verde con `--`**. Antes del flip
-   ese caso daba offline a los ~22 s (ADR-022). Cierre pendiente de decisión (ver
-   PENDIENTES): en el edge, un `ExecStartPre` en `ocr-publicar@` que publique al broker
-   local el offline retenido del contrato para `%i` antes de cualquier fallo de
-   arranque; y/o en la app, un timeout de datos que no deje el verde sin vitales
-   frescas.
+   ese caso daba offline a los ~22 s (ADR-022). **Decisión #1 de Dr. Milton (25-sep):
+   se cierra con un timeout de datos EN LA APP (F1.2, §7)**: sin una vital que cuente en
+   más de 10 s — o sin ninguna — la cama se ve "Sin datos" (punto gris, nunca verde),
+   así que la tarjeta que nace tras el apagón nunca llega a verde. Residual: el estado
+   retenido del server, su BD y la web siguen viendo el `online` viejo. El
+   `ExecStartPre` en `ocr-publicar@` que publicaría el offline al arrancar queda como
+   opción (PENDIENTES 🟢, por la honestidad de la BD del server); si se hace, reusa
+   `carga_estado()` (ADR-022 §1: un solo constructor del payload), nunca un JSON armado
+   a mano en la unit.
 5. **Backfill (Fase 2): reenviador con cursor + lotes MQTT + ACK de aplicación.**
    - Cursor high-water-mark (`reenvio(tabla, ultimo_id_confirmado)`, parte del esquema
      v2 versionado); pendiente = `id > cursor`; conexión SQLite propia con
@@ -1231,6 +1241,25 @@ la vista en vivo; el buffering es aditivo. El video no se buferea (en vivo por d
    Cubre la re-entrega de vitales viejas del §2 y la restauración tras apagón del §4. El
    precio: si el reloj del edge está mal (sin NTP, sin pila RTC), la app muestra `--` —
    falla cerrado, nunca abierto.
+   **Timeout de datos (F1.2, decisión #1 de Dr. Milton):** estado mostrado con
+   prioridad **Sin conexión > Sin datos > estado de la cama**. "Sin datos" = más de
+   10 s (`DATOS_MAX_S`) sin una vital que CUENTE, o ninguna desde que nació la tarjeta
+   (inmediato: nunca verde sin datos); se ve punto gris + etiqueta "Sin datos" gris,
+   valores `--`, alertas congeladas; una vital que cuenta lo levanta antes de pintar.
+   Una cama offline sin vitales también se ve "Sin datos". Una vital CUENTA solo si es
+   fresca, su edge no está en `0` y no es una **re-entrega**: `retain=1` (el broker la
+   re-entrega al re-suscribirse la app), `ts` que no avanza sobre el último visto de
+   esa cama (duplicado, o dos selladas en el mismo segundo) o la primera tras cada
+   paso a 1 del enlace de su edge — el bridge re-publica en CADA conexión, también la
+   primera, con retain=0 — o tras cambiar de edge. Costo: 1–2 s de "Sin datos" al abrir
+   la app o tras reconectar; un paso atrás del NTP del edge da un "Sin datos"
+   transitorio (falla cerrado). Una cama sin `device_id` no depende de ningún edge
+   (F1.1): a ella solo la protegen retain=1 y el `ts` que no avanza. Reloj: `CLOCK_BOOTTIME` con fallback a
+   `time.monotonic` (logueado): monotónico, pero cuenta la suspensión del teléfono. El
+   timer corre en el loop de flet cada 2 s, cada tick bajo try; todo el estado del
+   dashboard vive en ese loop (los callbacks de paho solo encolan), sin carreras.
+   Detecta en 10–12 s tras la última vital (más la latencia). Cubre el pipeline colgado
+   con proceso vivo (ADR-022 §6a) y la desconexión silenciosa del propio teléfono.
 
 **Fases.** F1 (entregada): broker local + bridge + ingesta local — los datos quedan
 protegidos YA; el server queda ciego durante cortes (statu quo) hasta F2. F2: reenviador
@@ -1254,10 +1283,15 @@ del corte en banco. El runbook registra la versión instalada en el paso 1.
 verificada en el header de TODOS los teléfonos ANTES del paso 1** (el retained del
 enlace aparece al arrancar el bridge, no en el flip); con el enlace vivo, latencia
 OCR→app indistinguible (A/B); corte largo CON ciclos online/offline del OCR durante el
-corte → la app marca esas camas "Sin conexión" en ≤25 s; al reconectar,
+corte → la app marca esas camas "Sin conexión" en ≤25 s (en un corte silencioso pasa
+antes por "Sin datos" a los ~10–12 s); al reconectar,
 `mosquitto_sub -v 'monitoreo/estado/#'` en el server igual al local y
 `monitoreo/edge/{device_id}/bridge` en `0` durante el corte y `1` al volver; al volver
-el enlace con el OCR offline, la app NO muestra vitales como actuales (`--`); filas
-creciendo en la BD local durante TODO el corte; `SERVIDOR_VIDEO` intacto (video igual).
+el enlace con el OCR offline, la app NO muestra vitales como actuales (`--`, "Sin
+datos"); OCR congelado (`systemctl kill -s STOP`) → "Sin datos" en ≤13 s desde el kill
+y siempre antes del offline del will (~22 s), y `-s CONT` → se recupera; teléfono
+bloqueado 1 min → al desbloquear, valores que se actualizan cada ~1 s o "Sin datos" en
+≤2 s, nunca números fijos más de ~10 s; filas creciendo en la BD local durante TODO el
+corte; `SERVIDOR_VIDEO` intacto (video igual).
 Aceptación F2: corte → reconexión → el hueco del server se rellena solo (dedupeado,
 auditado) y el cursor avanza solo con ACKs.

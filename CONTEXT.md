@@ -216,15 +216,17 @@ runbook §1.4 (server) / §2.2 (edge).
   la app las descarta por su `ts` — y la **ingesta local** (persistencia/ reusada)
   persiste TODO en la BD del edge.
   `monitoreo/edge/{device_id}/bridge` (retained 1/0, will del bridge en el server) =
-  señal de edge sin conexión desde F1. **Fase 1 + F1.1 entregadas** (confs + unit +
-  docs; F1.1 corrigió el conf que NO arrancaba — `persistence_location` duplicada — y
-  blindó la app Flet 1.0.6, que se congelaba con el retained del bridge y no leía el
-  enlace; ahora marca "Sin conexión" y no pinta vitales con `ts` de más de 30 s).
-  Limitación abierta (ADR-024 §4): tras un apagón de la Jetson con el OCR sin poder
-  arrancar, la cama queda verde con `--`. Despliegue: Dr. Milton, runbook §2.2 — con el
+  señal de edge sin conexión desde F1. **Fase 1 + F1.1 + F1.2 entregadas** (confs +
+  unit + docs; F1.1 corrigió el conf que NO arrancaba — `persistence_location`
+  duplicada — y blindó la app Flet 1.0.6, que se congelaba con el retained del bridge y
+  no leía el enlace; ahora marca "Sin conexión" y no pinta vitales con `ts` de más de
+  30 s). F1.2 cerró la limitación del apagón (ADR-024 §4) con un **timeout de datos en
+  la app**: más de 10 s sin una vital en vivo → "Sin datos" (nunca verde sin datos),
+  con prioridad Sin conexión > Sin datos > estado; cubre también el OCR colgado y la
+  desconexión silenciosa del teléfono. Despliegue: Dr. Milton, runbook §2.2 — con el
   **paso previo de la app 1.0.6 verificada en TODOS los teléfonos** y el chequeo NTP.
   **Fase 2 en pausa** (diseño aprobado: reenviador + agregador con dedup + pruning)
-  hasta que F1/F1.1 esté desplegada — se construye sobre estas mismas confs.
+  hasta que F1 esté desplegada — se construye sobre estas mismas confs.
 - **Supervisión systemd del edge** (iteración 12, ADR-023): units templated
   `ocr-publicar@.service` / `video-transmitir@.service` (instancia = cama) con
   `Restart=always` + `StartLimitIntervalSec=0` (el OCR sale a propósito ante frame
@@ -238,9 +240,9 @@ runbook §1.4 (server) / §2.2 (edge).
   ~22 s con `KEEPALIVE_S=15` — **hasta el flip de ADR-024**: desde entonces el will
   del OCR vive en el broker LOCAL y muere con él; el apagón lo señala el will del
   bridge, `monitoreo/edge/{device_id}/bridge = 0`); `cerrar()→offline` se conserva
-  para el apagado limpio (y desarma `on_connect` antes de cortar), y `on_connect` re-publica `online` en cada
-  reconexión (sin eso, un blip de red dejaría la cama viva marcada muerta para
-  siempre). El ts del will es el del PRIMER connect — el arranque del runner (caveat
+  para el apagado limpio (y desarma `on_connect` antes de cortar), y `on_connect`
+  re-publica `online` en cada reconexión (sin eso, un blip de red dejaría la cama viva
+  marcada muerta para siempre). El ts del will es el del PRIMER connect — el arranque del runner (caveat
   en el ADR: para razonar tiempos, `recibido_en` de la BD). El simulador queda fuera
   (un cliente para N camas = un solo will posible). Dos publicadores de la misma cama
   = takeover mutuo con flapping (avisado en el log). **Pendiente**: validación en

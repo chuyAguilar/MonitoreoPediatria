@@ -10,41 +10,54 @@
 > `[back]` este repo · `[infra/alfred]` el agente del servidor · `[edge]` la Jetson ·
 > `[hardware]` equipos físicos.
 
-**Última actualización:** 2026-09-22
+**Última actualización:** 2026-09-25
 
 ---
 
 ## 🔴 Alta
 
 - [ ] **[edge/back] Caja negra en el EDGE + store-and-forward** (Iteración 13, ADR-024)
-  — **Fase 1 + F1.1 ENTREGADAS en el repo** (broker local 127.0.0.1 + bridge
+  — **Fase 1 + F1.1 + F1.2 ENTREGADAS en el repo** (broker local 127.0.0.1 + bridge
   `cleansession true` con señal `monitoreo/edge/{device_id}/bridge` + ingesta local
   reusando `persistencia/` + flip `BROKER=localhost`; F1.1: el conf ya ARRANCA —
-  validado arrancándolo). Falta: (a) **la app 1.0.6 en TODOS los teléfonos** (ítem
-  [front] de abajo) — requisito ANTES del paso 1; (b) **despliegue F1 por Dr. Milton**
-  (runbook §2.2 — chequeo NTP, verificación cuantitativa, prueba del corte con la app
-  marcando "Sin conexión" en ≤25 s); (c) **Fase 2 en pausa** hasta desplegar F1:
-  reenviador (cursor + lotes por bytes + ACK de aplicación) y agregador con dedup
+  validado arrancándolo; F1.2: timeout de datos en la app). Falta: (a) **la app 1.0.6
+  en TODOS los teléfonos** (ítem [front] de abajo) — requisito ANTES del paso 1; (b)
+  **despliegue F1 por Dr. Milton** (runbook §2.2 — chequeo NTP, verificación
+  cuantitativa, prueba del corte con la app marcando "Sin conexión" en ≤25 s, prueba
+  `kill -STOP` del OCR, teléfono bloqueado); (c) **Fase 2 en pausa** hasta desplegar
+  F1: reenviador (cursor + lotes por bytes + ACK de aplicación) y agregador con dedup
   null-safe auditado + **pruning del edge** (~70–90 MB/día/cama). Mecanismo decidido:
   MQTT+ACK, no HTTPS (ADR-024). El interino del repoint a LAN `.130` se salta (plan B).
-- [ ] **[front] App 1.0.6: blindaje MQTT + consumo del enlace del edge** (F1.1,
-  ADR-024 §7) — código en la rama `f1.1-enlace-edge` del repo del Front (suscripción
-  explícita a `vitales/+`, `estado/+`, `edge/+/bridge`; despacho por topic con todo el
-  callback blindado; estado propio "Sin conexión": punto ámbar, valores `--`, alertas
-  congeladas; vitales con `ts` fuera de ±30 s = `--`, jamás pintadas ni evaluadas;
-  versión visible en el header). Falta: revisión y merge de Dr. Milton, build del APK
-  (versionCode 2) e instalación verificada en TODOS los teléfonos.
-- [ ] **[edge/front] DECISIÓN: apagón de la Jetson con el OCR sin poder arrancar →
-  cama VERDE con `--`** (hallazgo ALTA de la revisión de F1.1, ADR-024 §4). Tras el
-  flip el will del OCR muere con el broker local; al volver la energía el broker
-  restaura el `online` viejo y el bridge lo re-publica. Si el OCR no arranca
-  (capturadora ausente: sale antes de conectar MQTT), nadie publica offline. Las
-  vitales viejas ya NO se pintan (frescura), pero el punto queda verde. Opciones: (1)
-  `[edge]` `ExecStartPre` en `ocr-publicar@` que publique al broker local el offline
-  retenido del contrato para `%i` (arregla app, web y BD del server en la fuente;
-  requiere `mosquitto-clients`, ya en el runbook); (2) `[front]` timeout de datos: sin
-  vital fresca en N s, el punto deja el verde (sube el ítem 🟢 de abajo). No bloquea
-  el despliegue de F1 si se acepta como limitación conocida.
+  **Nota para F2:** en cada reconexión el bridge re-entrega la última vital retenida y
+  la BD del server la guarda otra vez con `retenido=0`. Es un duplicado exacto (con ts
+  viejo) solo si esa vital ya había llegado al server antes del corte (OCR parado desde
+  antes); si el OCR siguió publicando durante el corte, es la primera copia. Es
+  at-least-once aceptado (ADR-021 §7); evaluar extender el dedup de F2 a los
+  duplicados exactos del live en `vitales`. En `estado` NO, ni en el live ni en el
+  backfill: el offline del will repite el mismo raw en cada disparo (ADR-022 §2), así
+  que el dedup por (cama_id, ts, raw) del canal backfill de ADR-024 §5 **tampoco puede
+  aplicarse tal cual a `estado`** (dos will durante un corte llegarían como uno y el
+  histórico ocultaría una desconexión). Al retomar F2: limitarlo a `vitales` o
+  deduplicar por multiplicidad (o por el id del edge).
+- [ ] **[front] App 1.0.6: blindaje MQTT + enlace del edge + timeout de datos** (F1.1 y
+  F1.2, ADR-024 §7) — código en la rama `f1.1-enlace-edge` del repo del Front
+  (suscripción explícita a `vitales/+`, `estado/+`, `edge/+/bridge`; despacho por topic
+  con todo el callback blindado; estado propio "Sin conexión": punto ámbar, valores
+  `--`, alertas congeladas; vitales con `ts` fuera de ±30 s = `--`, jamás pintadas ni
+  evaluadas; "Sin datos" tras 10 s sin una vital en vivo, con prioridad Sin conexión >
+  Sin datos > estado; versión visible en el header). Falta: revisión y merge de Dr.
+  Milton, build del APK (versionCode 2) e instalación verificada en TODOS los teléfonos.
+- [ ] **[front] DECISIÓN (Dr. Milton): una lectura `null` del OCR BORRA la alerta
+  activa de fc/spo2/fr/temp** (hallazgo de la revisión de F1.2; preexistente, fuera de
+  su alcance). `fuera_de_rango(None, …)` devuelve False (`datos/perfiles.py`), así que
+  una vital con `"valor": null` apaga el pulso, pone `estados_alerta[signo]=False` y
+  manda `al_alerta(cama, False)`: la franja puede desaparecer, y al volver a leerse el
+  valor se re-dispara audio/notificación. El OCR emite `null` cuando no lee el dígito,
+  con confianza baja **o fuera del rango de plausibilidad** (`ocr/lector.py`): justo en
+  el valor más extremo la alerta se "resuelve" sola. El PNI, en cambio, ya queda
+  congelado. Propuesta: en `BedCard.actualizar_valor`, con `valor is None` no evaluar
+  (pintar `--` y dejar la alerta de ese signo congelada, como "Sin datos"), con tests;
+  registrar la semántica en ADR-024 (aditivo).
 
 ## 🟡 Media
 
@@ -105,8 +118,25 @@
 
 ## 🟢 Baja–Futuro
 
-- [ ] **[front]** Timeout de datos en la app (sube a 🔴 si se elige como cierre de la
-  DECISIÓN del apagón de arriba); auto-bump del `versionCode`; header centrado en móvil.
+- [ ] **[front]** Auto-bump del `versionCode`; header centrado en móvil.
+- [ ] **[edge] (opcional) Offline retenido al arrancar el OCR** — un `ExecStartPre` en
+  `ocr-publicar@` que publique al broker local el offline de `%i` antes de cualquier
+  fallo de arranque (tras un apagón con el OCR sin poder arrancar, el estado retenido
+  del server, su BD y la web siguen viendo el `online` viejo; la app ya lo cubre con su
+  timeout — ADR-024 §4). Si se hace, **reusa `carga_estado()`** (ADR-022 §1: un solo
+  constructor del payload), nunca un JSON armado a mano en la unit.
+- [ ] **[front] Reconexión MQTT de la app:** `ClienteMQTT` no llama
+  `reconnect_delay_set`, así que tras un corte usa el backoff por defecto de paho
+  (1 s → hasta 120 s; en el arnés de F1.2 una reconexión tardó ~12 s). El timeout ya
+  muestra "Sin datos" mientras tanto (falla cerrado); alinearlo con el OCR,
+  `reconnect_delay_set(1, 30)` (ADR-022 §4).
+- [ ] **[front] Reutilización del proceso en Android** (preexistente): con el servicio
+  en primer plano, reabrir la app corre `main()` en una sesión nueva y la instancia
+  vieja (su paho, el reloj del header y el timer de F1.2) queda viva — flet no llama
+  `will_unmount` al cerrar la sesión. Sin daño clínico (el estado es por instancia),
+  pero cada reapertura suma una conexión MQTT y timers. Arreglo propuesto: en
+  `page.on_close`, `loop_stop()` + `disconnect()` del cliente y cancelar los timers;
+  validar en el teléfono.
 - [ ] **[back]** Lógica de alarmas por anomalías en el back (hoy vive en el front).
 - [ ] **[back]** Pipeline de grabación de video ("caja negra").
 - [ ] **[back/hardware]** Perfil de ROIs del uMEC12 + reconfirmar lecturas cuando llegue
@@ -116,6 +146,13 @@
   IA; multi-cama en vivo.
 
 ## ✅ Hecho reciente (contexto)
+
+- [x] **[front] DECISIÓN del apagón de la Jetson → cama verde con `--`** (hallazgo ALTA
+  de la revisión de F1.1, ADR-024 §4) — **cerrada** (25-sep, decisión #1 de Dr.
+  Milton) con el **timeout de datos en la app** (F1.2): más de 10 s sin una vital en
+  vivo, o ninguna desde que nació la tarjeta → "Sin datos", nunca verde. Cubre también
+  el OCR colgado con proceso vivo y la desconexión silenciosa del teléfono. El
+  `ExecStartPre` del edge queda como 🟢 opcional.
 
 - [x] **[infra/alfred] IP estática del servidor `192.168.110.130`** (22-sep) — fijada
   server-side vía netplan (`/etc/netplan/99-ip-estatica.yaml`, con respaldo), NO depende del

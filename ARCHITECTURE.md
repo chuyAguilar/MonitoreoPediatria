@@ -143,9 +143,12 @@ flowchart LR
   caído durante el corte, o si la Jetson se reinició tras un apagón (el broker local
   restaura sus retenidos del disco), esas vitales tienen minutos u horas. Por eso los
   consumidores juzgan la vital por su `ts` (el OCR lo re-sella en cada tick): la app Flet
-  no pinta ni evalúa para alertas una vital con `ts` fuera de ±30 s (falla cerrado). La
-  web NO lee el topic del edge: cubre la caída con su watchdog de datos (5 s) y aún no
-  filtra por `ts` (pendiente en PENDIENTES.md).
+  no pinta ni evalúa para alertas una vital con `ts` fuera de ±30 s (falla cerrado), no
+  cuenta las re-entregas (retain=1, `ts` que no avanza, primera tras cada conexión del
+  bridge o tras cambiar de edge)
+  y, con su **timeout de datos** (F1.2), marca "Sin datos" la cama que pasa más de 10 s
+  sin una vital en vivo. La web NO lee el topic del edge: cubre la caída con su watchdog
+  de datos (5 s) y aún no filtra por `ts` (pendiente en PENDIENTES.md).
 - La **fiabilidad** vive en la BD local del edge; el server recibe el atraso por el
   canal de backfill (Fase 2) con deduplicación — jamás por la cola del bridge.
 - El video NO se buferea (en vivo por diseño; sigue directo a MediaMTX).
@@ -202,7 +205,7 @@ capacidad = otra Jetson. El servidor y la web no cambian: descubren camas por lo
 | **MediaMTX** | Servidor | Ingesta RTSP → sirve WebRTC | `8554` RTSP in, `8889` WHEP out |
 | **Web estática** | Servidor | Sirve el dashboard (systemd `dashboard`) | `8080` |
 | **Dashboard** | Navegador (mando) | Next.js export estático, grid de camas | — |
-| **App Flet (móvil)** | Teléfonos (repo aparte) | **Consumidor principal**: alertas + tarjetas por cama. Cliente MQTT del broker del server, suscrito SOLO a `vitales/+`, `estado/+` y `edge/+/bridge` (nunca `monitoreo/#`); marca "Sin conexión" las camas de un edge con enlace `0` (ADR-024 §7) | `1883` (cliente) |
+| **App Flet (móvil)** | Teléfonos (repo aparte) | **Consumidor principal**: alertas + tarjetas por cama. Cliente MQTT del broker del server, suscrito SOLO a `vitales/+`, `estado/+` y `edge/+/bridge` (nunca `monitoreo/#`); marca "Sin conexión" las camas de un edge con enlace `0` y "Sin datos" las que pasan más de 10 s sin una vital en vivo (timeout de datos, F1.2; prioridad Sin conexión > Sin datos > estado — ADR-024 §7) | `1883` (cliente) |
 
 Toda la comunicación entre máquinas va cifrada sobre **Tailscale**.
 

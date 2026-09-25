@@ -252,13 +252,14 @@ El server es off-site y el enlace puede caerse: el edge persiste TODO localmente
 live viaja por un bridge. **Orden de transición SIN pérdida** (cada paso es verificable
 antes del siguiente; el OCR sigue publicando al server hasta el paso 4):
 
-**Paso previo OBLIGATORIO — la app corregida en TODOS los teléfonos** (F1.1). El
-retained `monitoreo/edge/{device_id}/bridge` aparece en el server en el **paso 1**
-(al arrancar el bridge), no en el flip — y la app anterior a la versión **1.0.6** se
-congela con él (su hilo MQTT muere y sigue mostrando "Conectado" con valores
-congelados). Antes del paso 1: **listar TODOS los teléfonos que tengan la app** (no
-solo el de Dr. Milton), instalar el APK 1.0.6 en cada uno y **verificar en el header
-de cada teléfono** que dice `v1.0.6`. Si falta uno, no se pasa al paso 1.
+**Paso previo OBLIGATORIO — la app corregida en TODOS los teléfonos** (F1.1 + F1.2;
+la versión sigue siendo 1.0.6: el APK se construye desde la rama del Front que ya
+trae F1.2). El retained `monitoreo/edge/{device_id}/bridge` aparece en el server en el
+**paso 1** (al arrancar el bridge), no en el flip — y la app anterior a la versión
+**1.0.6** se congela con él (su hilo MQTT muere y sigue mostrando "Conectado" con
+valores congelados). Antes del paso 1: **listar TODOS los teléfonos que tengan la app**
+(no solo el de Dr. Milton), instalar el APK 1.0.6 en cada uno y **verificar en el
+header de cada teléfono** que dice `v1.0.6`. Si falta uno, no se pasa al paso 1.
 
 ```bash
 # 0) Reloj sincronizado (el recibido_en de la BD local ES la linea temporal
@@ -270,7 +271,7 @@ timedatectl   # debe decir "System clock synchronized: yes" (si no: revisar NTP)
 # 0b) El clon de la Jetson AL DIA (los pasos 1 y 4 copian DESDE el clon: el
 #     conf de F1 original no arranca y la unit vieja no trae After/Wants):
 cd /home/jetson/MonitoreoPediatria && git pull && git log -1 --oneline
-#   -> el commit de F1.1 o posterior (si git pull se queja de cambios locales:
+#   -> el commit de F1.2 o posterior (si git pull se queja de cambios locales:
 #      PARAR y revisarlos, nunca forzar)
 grep -c '^persistence_location' docs/ito2/mosquitto-edge.conf.ejemplo   # -> 0
 grep -E '^(After|Wants)=' ocr/ocr-publicar@.service   # -> ambas con mosquitto.service
@@ -330,18 +331,49 @@ sudo systemctl restart ocr-publicar@cama-NN
 OCR ciclando (Mac dormida y despierta) → la BD local sigue creciendo TODO el corte; el
 server muestra `monitoreo/edge/<device_id>/bridge = 0` (a los ~22 s de un corte
 silencioso — keepalive del bridge de 15 s) y **la app marca esas camas "Sin conexión"
-(punto ámbar) en ≤25 s**; al volver el enlace, la app queda al día en segundos y el
-estado retenido del server converge con el local (`mosquitto_sub -v
-'monitoreo/estado/#'` igual en ambos lados). **Variante obligatoria**: devolver el
-enlace con el OCR en su fase offline (Mac dormida) → la app NO muestra vitales como
-actuales (`--` gris): el bridge re-entrega la última vital retenida y la app la
-descarta por su `ts` viejo. (Limitación conocida, ADR-024 §4: tras un APAGÓN de la
-Jetson con el OCR sin poder arrancar, la cama queda con punto verde y `--` — pendiente
-de decisión en PENDIENTES.) El hueco del server se rellena solo cuando
+(punto ámbar) en ≤25 s** — en un corte silencioso pasa ANTES por "Sin datos" (punto gris
++ etiqueta) a los ~10–12 s, por el timeout de datos (F1.2): es lo esperado, no un
+fallo. Al volver el enlace, la app queda al día en segundos y el estado retenido del
+server converge con el local (`mosquitto_sub -v 'monitoreo/estado/#'` igual en ambos
+lados). **Variante obligatoria**: devolver el enlace con el OCR en su fase offline
+(Mac dormida) → la app NO muestra vitales como actuales (`--` gris con la etiqueta
+"Sin datos"): el bridge re-entrega la última vital retenida y la app no la cuenta. (La
+limitación del APAGÓN de la Jetson con el OCR sin poder arrancar — ADR-024 §4 — quedó
+cerrada en la app por el timeout de datos: la cama se ve "Sin datos", nunca verde; el
+estado retenido del server y la web aún ven el `online` viejo.) El hueco del server se rellena solo cuando
 llegue la Fase 2 (reenviador); mientras, una copia manual de la BD local es material de
 CONSULTA (adjuntarla aparte), **jamás** merge en la BD del server (sin dedup
 duplicaría) — y solo hacia el server, nunca a laptops, borrando la copia tras usarla
 (datos de menores, CONTEXT §2).
+
+**Prueba del OCR congelado** (timeout de datos de la app, F1.2 — **jamás en una cama
+con paciente**):
+
+```bash
+sudo systemctl kill -s STOP ocr-publicar@cama-NN
+#   -> la app marca la cama "Sin datos" (punto gris + etiqueta) en <=13 s desde el
+#      kill (nominal 10-12 s tras la ultima vital que mostro: 10 s de umbral + hasta
+#      2 s del timer; el resto es latencia) y SIEMPRE antes de ~22 s, cuando llega el
+#      offline del will del OCR (el STOP congela tambien su hilo MQTT); al llegar ese
+#      offline, la cama sigue en "Sin datos". Si solo cambia a los ~22 s, el timeout
+#      NO funciona.
+sudo systemctl kill -s CONT ocr-publicar@cama-NN
+#   -> se recupera sola en segundos (paho reconecta y re-publica online)
+```
+
+**Un proceso detenido sigue `active (running)`: systemd NO lo revive** (`Restart=always`
+solo actúa si el proceso sale; la unit no tiene `WatchdogSec`). Mandar SIEMPRE el
+`CONT` — o `sudo systemctl restart ocr-publicar@cama-NN`. Honestidad de la prueba: el
+STOP congela también a paho, así que solo sus primeros ~22 s equivalen al OCR colgado
+con proceso vivo (ADR-022 §6a); lo que prueba el timeout es que "Sin datos" aparezca
+antes del will.
+
+**Prueba del teléfono bloqueado** (reloj `CLOCK_BOOTTIME` de la app, F1.2): con la app
+mostrando datos en vivo, bloquear el teléfono 1 min y desbloquear → o los valores ya se
+actualizan cada ~1 s (la app puede seguir recibiendo bloqueada: tiene servicio en primer
+plano), o aparece "Sin datos" en ≤2 s y se recupera sola; **NUNCA números fijos por más
+de ~10 s**. Si se puede ver el log de la app, al arrancar dice `timeout de datos con
+reloj CLOCK_BOOTTIME`.
 
 **Corrida manual de depuración en la Jetson**: parar antes el servicio (`systemctl stop
 vitales-ingest-edge`) y pasar `--bd` fuera del working tree — los defaults crearían otra
